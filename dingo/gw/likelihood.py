@@ -262,7 +262,7 @@ class StationaryGaussianGWLikelihood(GWSignal, Likelihood):
                 for d_ifo, mu_ifo in zip(d.values(), mu.values())
             ],
         )
-        return self.log_Zn + kappa2 - 1 / 2.0 * rho2opt
+        return self.log_Zn + kappa2 - 1 / 2.0 * rho2opt # FS: self.psi is a huge number ~ 10^5
 
     def log_likelihood_phase_grid(self, theta, phases=None):
         # TODO: Implement for time marginalization

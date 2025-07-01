@@ -94,7 +94,8 @@ class DingoDataset:
             self.from_dictionary(dictionary)
 
     def to_file(self, file_name, mode="w"):
-        print("Saving dataset to " + str(file_name))
+        # FS: I removed this print
+        #print("Saving dataset to " + str(file_name))
         save_dict = {
             k: v
             for k, v in vars(self).items()
@@ -108,7 +109,8 @@ class DingoDataset:
                 f.attrs["dataset_type"] = self.dataset_type
 
     def from_file(self, file_name):
-        print("Loading dataset from " + str(file_name) + ".")
+        # FS: I remove this print
+        #print("Loading dataset from " + str(file_name) + ".")
         with h5py.File(file_name, "r") as f:
             # Load only the keys that the class expects
             loaded_dict = recursive_hdf5_load(f, keys=self._data_keys)

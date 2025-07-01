@@ -427,7 +427,8 @@ class Result(CoreResult):
             self.synthetic_phase_kwargs.get("num_processes", 1), num_valid_samples // 10
         )
 
-        print(f"Estimating synthetic phase for {num_valid_samples} samples.")
+        # FS: removing this print
+        #print(f"Estimating synthetic phase for {num_valid_samples} samples.")
         t0 = time.time()
 
         if not inverse:
@@ -517,7 +518,8 @@ class Result(CoreResult):
             self.samples["log_prob"] = log_prob_array
             del self.samples["phase"]
 
-        print(f"Done. This took {time.time() - t0:.2f} s.")
+        # FS: removing this print
+        #print(f"Done. This took {time.time() - t0:.2f} s.")
 
     def get_samples_bilby_phase(self):
         """

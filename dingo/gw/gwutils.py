@@ -19,6 +19,10 @@ def get_window(window_kwargs):
         alpha = 2 * roll_off / T
         w = tukey(int(T * f_s), alpha)
         return w
+    if type == "NoWindowFactor":
+        # FS: here I am putting the window factor == 1 as in the Bilby runs I have
+        w = np.array([1]) #it must be an array, otherwise it doesn't work in get_window_factor() [see below]
+        return w
     else:
         raise NotImplementedError(f"Unknown window type {type}.")
 
@@ -28,6 +32,8 @@ def get_window_factor(window):
     window_kwargs, first build the window."""
     if type(window) == dict:
         window = get_window(window)
+    # FS: added a print to the window factor
+    #print('FS: window factor = ', np.sum(window**2) / len(window))
     return np.sum(window**2) / len(window)
 
 

@@ -152,3 +152,7 @@ dmypy.json
 **/tmp_files/*
 
 dingo-venv/
+
+*examples*
+
+*nohup*

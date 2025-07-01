@@ -202,7 +202,8 @@ class Sampler(object):
         """
         self.samples = None
 
-        print(f"Running sampler to generate {num_samples} samples.")
+        # FS: removing this print
+        #print(f"Running sampler to generate {num_samples} samples.")
         t0 = time.time()
         if not self.unconditional_model:
             if self.context is None:
@@ -226,7 +227,8 @@ class Sampler(object):
         # correction for t_ref) and represent as DataFrame.
         self._post_process(samples)
         self.samples = pd.DataFrame(samples)
-        print(f"Done. This took {time.time() - t0:.1f} s.")
+        # FS: removing this other print
+        #print(f"Done. This took {time.time() - t0:.1f} s.")
         sys.stdout.flush()
 
     def log_prob(self, samples: pd.DataFrame) -> np.ndarray:

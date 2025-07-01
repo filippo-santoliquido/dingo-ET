@@ -103,16 +103,17 @@ class WaveformGenerator:
 
     @spin_conversion_phase.setter
     def spin_conversion_phase(self, value):
-        if value is None:
-            print(
-                "Setting spin_conversion_phase = None. Using phase parameter for "
-                "conversion to cartesian spins."
-            )
-        else:
-            print(
-                f"Setting spin_conversion_phase = {value}. Using this value for the "
-                f"phase parameter for conversion to cartesian spins."
-            )
+        # FS: removing this print
+        #if value is None:
+        #    print(
+        #        "Setting spin_conversion_phase = None. Using phase parameter for "
+        #        "conversion to cartesian spins."
+        #    )
+        #else:
+        #    print(
+        #        f"Setting spin_conversion_phase = {value}. Using this value for the "
+        #        f"phase parameter for conversion to cartesian spins."
+        #    )
         self._spin_conversion_phase = value
 
     def generate_hplus_hcross(
@@ -486,6 +487,9 @@ class WaveformGenerator:
 
         # Depending on whether the domain is uniform or non-uniform call the appropriate wf generator
         hp, hc = LS.SimInspiralFD(*parameters_lal)
+        # FS: I remove this check with Pop III parameters as with high detector-frame mass I get loud signal (i.e. abs(h) > 1e-20)
+        # FS: does this affect training?
+        """
         # The check below filters for unphysical waveforms:
         # For IMRPhenomXPHM, the LS.SimInspiralFD result is numerically instable
         # for rare parameter configurations (~1 in 1M), leading to bins with very large
@@ -509,7 +513,7 @@ class WaveformGenerator:
                     f"Warning: turning off multibanding for parameters {parameters_lal}"
                     f"likely numerically might not have fixed it, check manually."
                 )
-
+        """
         # Ensure that the waveform agrees with the frequency grid defined in the domain.
         if not isclose(self.domain.delta_f, hp.deltaF, rel_tol=1e-6):
             raise ValueError(

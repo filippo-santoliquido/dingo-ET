@@ -71,7 +71,13 @@ class GWSignal(object):
             self.waveform_generator = WaveformGenerator(domain=wfg_domain, **wfg_kwargs)
 
         self.t_ref = t_ref
-        self.ifo_list = InterferometerList(ifo_list)
+        # FS: modified as train_builders.py to get ET
+        #self.ifo_list = InterferometerList(ifo_list)
+        if ifo_list[0] == 'ET-dingo1':
+            self.ifo_list = InterferometerList(['ET-dingo'])
+        else:
+            self.ifo_list = InterferometerList(ifo_list)
+        #print('FS: ifo_list = ', self.ifo_list)
 
         # When we set self.whiten, the projection transforms are automatically prepared.
         self._calibration_envelope = None
@@ -365,6 +371,7 @@ class Injection(GWSignal):
             self.whiten = False
 
         data = {}
+        h = {}
         for ifo, s in signal["waveform"].items():
             noise = (
                 (np.random.randn(len(s)) + 1j * np.random.randn(len(s)))
@@ -373,7 +380,10 @@ class Injection(GWSignal):
             )
             d = s + noise
             data[ifo] = self.data_domain.update_data(d, low_value=0.0)
+            h[ifo] = s
 
+        # FS: here I am saving also the signal, useful for evaluating SNR
+        signal["h"] = h
         signal["waveform"] = data
         return signal
 

@@ -28,6 +28,9 @@ from dingo.gw.prior import default_inference_parameters
 from dingo.gw.gwutils import *
 from dingo.core.utils import *
 
+# FS: import extra libraries
+import numpy as np
+import matplotlib.pyplot as plt
 
 def build_dataset(data_settings):
     """Build a dataset based on a settings dictionary. This should contain the path of
@@ -80,6 +83,7 @@ def set_train_transforms(wfd, data_settings, asd_dataset_path, omit_transforms=N
     # By passing the wfd domain when instantiating the noise dataset, this ensures the
     # domains will match. In particular, it truncates the ASD dataset beyond the new
     # f_max, and sets it to 1 below f_min.
+    print('FS: data_settings["detectors"]',data_settings["detectors"])
     asd_dataset = ASDDataset(
         asd_dataset_path,
         ifos=data_settings["detectors"],
@@ -104,7 +108,16 @@ def set_train_transforms(wfd, data_settings, asd_dataset_path, omit_transforms=N
 
     ref_time = data_settings["ref_time"]
     # Build detector objects
-    ifo_list = InterferometerList(data_settings["detectors"])
+    # FS: hacked manually!
+    #if data_settings["detectors"][0] == 'ET-dingo1':
+    #    ifo_list = InterferometerList(['ET-dingo'])
+    if len(data_settings["detectors"]) == 3 and all(d.startswith('ET-dingo') for d in data_settings["detectors"]):
+        ifo_list = InterferometerList(['ET-dingo'])
+    elif all(d.startswith('ET-dingo') for d in data_settings["detectors"][:3]) and len(data_settings["detectors"]) > 3:
+        ifo_list = InterferometerList(['ET-dingo'] + data_settings["detectors"][3:])
+    else:
+        ifo_list = InterferometerList(data_settings["detectors"])
+    print('FS: ifo_list = ', ifo_list)
 
     # Build transforms.
     transforms = [SampleExtrinsicParameters(extrinsic_prior_dict),
@@ -153,6 +166,7 @@ def set_train_transforms(wfd, data_settings, asd_dataset_path, omit_transforms=N
 
     transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
     transforms.append(SampleNoiseASD(asd_dataset))
+    #print('FS: domain', domain.noise_std)
     transforms.append(WhitenAndScaleStrain(domain.noise_std))
     # We typically add white detector noise. For debugging purposes, this can be turned
     # off with zero_noise option in data_settings.
@@ -228,6 +242,7 @@ def build_svd_for_embedding_network(
     # the construction of the SVD to impact this, so begin with a fresh copy of this
     # dictionary.
     data_settings = copy.deepcopy(data_settings)
+    print('FS: data_settings',data_settings, 'FS: I manually hacked train_builders.py. ET detectors creates three sub detectors. This is not expected with LVK. This needs a better solution')
 
     # This is needed to prevent an occasional error when loading a large dataset into
     # memory using a dataloader. This removes a limitation on the number of "open files".
@@ -253,8 +268,28 @@ def build_svd_for_embedding_network(
 
     print("Generating waveforms for embedding network SVD initialization.")
     time_start = time.time()
+    #print('FS: start time = ', time_start)
+    print('FS: this is just one waveform:')
+    print('FS: wfd', wfd[1])
+    print('FS: this is another one:')
+    print('FS: wfd', wfd[2])
+
+    #FS: plot ASD -> it is = 1 for f < 6 Hz
+    #new_freq =  np.linspace(0,256,2049)
+    #plt.plot(new_freq, wfd[1]['asds']['ET-dingo1'], label = '1')
+    #plt.plot(new_freq, wfd[2]['asds']['ET-dingo1'], label = '2', ls = '--')
+    #plt.yscale('log')
+    #plt.xscale('log')
+    #plt.ylabel('ASD')
+    #plt.xlabel('frequency [Hz]')
+    #plt.legend()
+    #plt.savefig('check_asds_in_train_builders_lower_max_freq.pdf', format = 'pdf')
+    # FS: end of plotting ASD
+    
     ifos = list(wfd[0]["waveform"].keys())
+    #print('FS: ifos = ', ifos)
     waveform_len = len(wfd[0]["waveform"][ifos[0]])
+    print('FS: waveform_len = ', ifos)
     num_waveforms = num_training_samples + num_validation_samples
     if num_waveforms > len(wfd):
         raise IndexError(

@@ -85,6 +85,7 @@ class WhitenFixedASD(object):
             psd.frequency_array, psd.asd_array, bounds_error=False, fill_value=np.inf
         )
         self.asd_array = asd_interp(domain.sample_frequencies)
+        # FS: what is this low value? low_value (float) – Below f_min, set the data to this value. It shouldn't be a problem
         self.asd_array = domain.update_data(self.asd_array, low_value=1e-22)
 
         if precision is not None:
@@ -117,6 +118,7 @@ class WhitenFixedASD(object):
                 result[k] = v * self.asd_array
             else:
                 result[k] = v / self.asd_array
+                
         return result
 
 
@@ -137,7 +139,12 @@ class WhitenAndScaleStrain(object):
 
     def __call__(self, input_sample):
         sample = input_sample.copy()
+        # added to understand sample -> not understood: where this sample is defined? 
+        #print('FS:', sample)
         ifos = sample["waveform"].keys()
+        #print('FS: ifos = ', ifos)
+        # FS: Convert dict_keys to a list
+        ifos_list = list(ifos)
         if ifos != sample["asds"].keys():
             raise ValueError(
                 f"Detectors of strain data, {ifos}, do not match "
@@ -147,6 +154,19 @@ class WhitenAndScaleStrain(object):
             ifo: sample["waveform"][ifo] / (sample["asds"][ifo] * self.scale_factor)
             for ifo in ifos
         }
+        #print('FS: sample["waveform"] = ', sample["waveform"]) -> with this print it looks like waveform is not split in polarisations
+        #whitened_strains_noscale = {
+        #    ifo: sample["waveform"][ifo] / (sample["asds"][ifo])
+        #    for ifo in ifos
+        #}
+        # FS: scale_factor must be 1 if you want it not to have effect
+        # print('FS: whitened_strains = ',whitened_strains)
+        # This print has no sense...
+        #print('FS: whitened_strains shape =', whitened_strains['ET-dingo1'].shape)
+        # (16385,) --> this is done for each waveform
+        # let's check zero mean and unit variance
+        #print(ifos_list[0],'FS: whitened_strains mean = ', np.mean(np.abs(whitened_strains[ifos_list[0]])), ' variance = ', np.var(np.abs(whitened_strains[ifos_list[0]])), 'with scale factor')
+        #print(ifos_list[0],'FS: whitened_strains mean = ', np.mean(np.abs(whitened_strains_noscale[ifos_list[0]])), ' variance = ', np.var(np.abs(whitened_strains_noscale[ifos_list[0]])), 'without scale factor')
         sample["waveform"] = whitened_strains
         return sample
 

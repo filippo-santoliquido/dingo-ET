@@ -284,12 +284,14 @@ class Result(DingoDataset):
         valid_samples = (log_prior + delta_log_prob_target) != -np.inf
         theta = theta.iloc[valid_samples]
 
-        print(f"Calculating {len(theta)} likelihoods.")
+        # FS: removing this print
+        #print(f"Calculating {len(theta)} likelihoods.")
         t0 = time.time()
         log_likelihood = self.likelihood.log_likelihood_multi(
             theta, num_processes=num_processes
         )
-        print(f"Done. This took {time.time() - t0:.2f} seconds.")
+        # FS: removing this print
+        #print(f"Done. This took {time.time() - t0:.2f} seconds.")
 
         self.log_noise_evidence = self.likelihood.log_Zn
         self.samples["log_prior"] = log_prior
