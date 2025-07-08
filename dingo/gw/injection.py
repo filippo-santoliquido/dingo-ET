@@ -73,11 +73,19 @@ class GWSignal(object):
         self.t_ref = t_ref
         # FS: modified as train_builders.py to get ET
         #self.ifo_list = InterferometerList(ifo_list)
-        if ifo_list[0] == 'ET-dingo1':
+        ##if ifo_list[0] == 'ET-dingo1':
+        ##    self.ifo_list = InterferometerList(['ET-dingo'])
+        ##else:
+        ##    self.ifo_list = InterferometerList(ifo_list)
+        #print('FS: ifo_list = ', self.ifo_list)
+
+        if len(ifo_list) == 3 and all(d.startswith('ET-dingo') for d in ifo_list):
             self.ifo_list = InterferometerList(['ET-dingo'])
+        elif all(d.startswith('ET-dingo') for d in ifo_list[:3]) and len(ifo_list) > 3:
+            self.ifo_list = InterferometerList(['ET-dingo'] + ifo_list[3:])
         else:
             self.ifo_list = InterferometerList(ifo_list)
-        #print('FS: ifo_list = ', self.ifo_list)
+        #print('FS: ifo_list = ', ifo_list)
 
         # When we set self.whiten, the projection transforms are automatically prepared.
         self._calibration_envelope = None
