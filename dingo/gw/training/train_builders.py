@@ -4,7 +4,7 @@ from typing import List, Optional
 import numpy as np
 import torch.multiprocessing
 import torchvision
-from bilby.gw.detector import InterferometerList
+from bilby_xG.networks import InterferometerList
 from threadpoolctl import threadpool_limits
 
 from dingo.core.utils import *

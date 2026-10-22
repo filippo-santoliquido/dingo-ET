@@ -16,7 +16,7 @@ from dingo.core.utils.backward_compatibility import (
 )
 from dingo.core.inference.composer import ChainComposer
 from dingo.core.inference.steps import PriorFactor, SampleTableFactor
-from bilby.gw.detector import InterferometerList
+from bilby_xG.networks import InterferometerList
 from dingo.gw.frequency_updates import resolve_frequency_bounds
 from dingo.gw.prior import split_off_extrinsic_parameters
 
