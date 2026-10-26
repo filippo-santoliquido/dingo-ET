@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from astropy.time import Time
-from bilby.gw.detector import InterferometerList
+from bilby_xG.networks import InterferometerList
 from bilby.gw.utils import ln_i0
 from torchvision.transforms import Compose
 from dingo.core.density import (

@@ -11,7 +11,7 @@ import warnings
 import numpy as np
 import torch
 from bilby.core.prior import PriorDict, Uniform
-from bilby.gw.detector import InterferometerList
+from bilby_xG.networks import InterferometerList
 from torchvision.transforms import Compose
 from dingo.core.inference.steps import _n_rows
 from dingo.core.posterior_models import BasePosteriorModel

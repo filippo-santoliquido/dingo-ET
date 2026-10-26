@@ -1,5 +1,5 @@
 import numpy as np
-from bilby.gw.detector import InterferometerList
+from bilby_xG.networks import InterferometerList
 from torchvision.transforms import Compose
 
 from dingo.gw.noise.asd_dataset import ASDDataset
