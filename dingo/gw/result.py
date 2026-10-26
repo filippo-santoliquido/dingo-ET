@@ -16,7 +16,7 @@ from dingo.core.utils.backward_compatibility import (
 )
 from dingo.core.inference.composer import ChainComposer
 from dingo.core.inference.steps import PriorFactor, SampleTableFactor
-from bilby_xG.networks import InterferometerList
+from dingo.gw.gwutils import get_interferometer_list
 from dingo.gw.frequency_updates import resolve_frequency_bounds
 from dingo.gw.prior import split_off_extrinsic_parameters
 
@@ -131,7 +131,8 @@ class Result(CoreResult):
         sampler context; the event data's detectors for a transport-only result."""
         if self.sampler_context is not None:
             return [
-                ifo.name for ifo in InterferometerList(self.sampler_context.detectors)
+                ifo.name
+                for ifo in get_interferometer_list(self.sampler_context.detectors)
             ]
         return list(self.context["waveform"].keys())
 

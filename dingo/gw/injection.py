@@ -1,5 +1,5 @@
 import numpy as np
-from bilby_xG.networks import InterferometerList
+from dingo.gw.gwutils import get_interferometer_list
 from torchvision.transforms import Compose
 
 from dingo.gw.noise.asd_dataset import ASDDataset
@@ -79,7 +79,7 @@ class GWSignal(object):
             self.waveform_generator = WaveformGenerator(domain=wfg_domain, **wfg_kwargs)
 
         self.t_ref = t_ref
-        self.ifo_list = InterferometerList(ifo_list)
+        self.ifo_list = get_interferometer_list(ifo_list)
 
         # When we set self.whiten, the projection transforms are automatically prepared.
         self._calibration_envelope = None

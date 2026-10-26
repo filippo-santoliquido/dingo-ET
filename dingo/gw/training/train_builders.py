@@ -4,7 +4,7 @@ from typing import List, Optional
 import numpy as np
 import torch.multiprocessing
 import torchvision
-from bilby_xG.networks import InterferometerList
+from dingo.gw.gwutils import get_interferometer_list
 from threadpoolctl import threadpool_limits
 
 from dingo.core.utils import *
@@ -107,7 +107,7 @@ def set_train_transforms(
             print("Omitting \n\t" + "\n\t".join([t.__name__ for t in omit_transforms]))
 
     # Build detector objects
-    ifo_list = InterferometerList(data_settings["detectors"])
+    ifo_list = get_interferometer_list(data_settings["detectors"])
     ifo_names = [ifo.name for ifo in ifo_list]
 
     # By passing the wfd domain when instantiating the noise dataset, this ensures the
