@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 import torch
 from astropy.time import Time
-from bilby_xG.networks import InterferometerList
+from dingo.gw.gwutils import get_interferometer_list
 from bilby.gw.utils import ln_i0
 from torchvision.transforms import Compose
 from dingo.core.density import (
@@ -681,7 +681,7 @@ def _build_gnpe_transforms(model: BasePosteriorModel):
     """
     meta = model.base_metadata
     data_settings = meta["train_settings"]["data"]
-    ifo_list = InterferometerList(data_settings["detectors"])
+    ifo_list = get_interferometer_list(data_settings["detectors"])
     domain = build_domain(meta["dataset_settings"]["domain"])
     if "domain_update" in data_settings:
         domain.update(data_settings["domain_update"])

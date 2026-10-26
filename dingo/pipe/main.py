@@ -10,7 +10,7 @@ import numpy as np
 import dingo.pipe.create_injections
 
 from bilby.core.prior import PriorDict
-from bilby_xG.networks import InterferometerList
+from dingo.gw.gwutils import get_interferometer_list
 from bilby_pipe.input import Input
 from bilby_pipe.main import MainInput as BilbyMainInput
 from bilby_pipe.utils import (
@@ -234,7 +234,7 @@ def fill_in_arguments_from_model(args, perform_arg_checks=True):
                 # bilby's current ET definition (all arms share one sensitivity curve);
                 # supporting this would require bilby/bilby_pipe to treat ET1/ET2/ET3
                 # as separate detectors.
-                asd_key = [ifo.name for ifo in InterferometerList([ifo_name])][0]  # 'ET'-> 'ET1' and fixing 'ET1'
+                asd_key = [ifo.name for ifo in get_interferometer_list([ifo_name])][0]  # 'ET'-> 'ET1' and fixing 'ET1'
             psd_path = asd_dataset.save_psd(args.outdir, asd_key, rng=rng)
             psd_dict[ifo_name] = str(psd_path) # keyed by 'ET'
         args.asd_dataset = None

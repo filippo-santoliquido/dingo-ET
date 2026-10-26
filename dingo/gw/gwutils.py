@@ -5,10 +5,40 @@ from copy import deepcopy
 from scipy.signal.windows import tukey
 from scipy.interpolate import interp1d
 
-from bilby.gw.detector import PowerSpectralDensity
+from bilby.gw.detector import (
+    InterferometerList,
+    PowerSpectralDensity,
+    get_empty_interferometer,
+)
 
 from dingo.gw.prior import default_extrinsic_dict
 from dingo.gw.prior import BBHExtrinsicPriorDict
+
+
+def get_interferometer_list(detectors):
+    """InterferometerList from detector names (or Interferometer objects).
+
+    Names defined in bilby load bilby's interferometers, as before. Other names
+    (e.g. the Einstein Telescope L-shaped detectors ET_1L_IT, ET_1L_DE) load from
+    bilby_xG, if it is installed. Objects are passed through.
+    """
+    ifos = []
+    for name in detectors:
+        if not isinstance(name, str):
+            ifos.append(name)
+            continue
+        try:
+            ifos.append(get_empty_interferometer(name))
+        except ValueError as bilby_error:
+            try:
+                from bilby_xG.networks import get_empty_interferometer as get_xg
+            except ImportError:
+                raise ValueError(
+                    f"Interferometer {name} is not defined in bilby. Install "
+                    f"bilby_xG for next-generation detectors."
+                ) from bilby_error
+            ifos.append(get_xg(name))
+    return InterferometerList(ifos)
 
 
 def get_window(window_kwargs):

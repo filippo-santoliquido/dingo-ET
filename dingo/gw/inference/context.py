@@ -11,7 +11,7 @@ import warnings
 import numpy as np
 import torch
 from bilby.core.prior import PriorDict, Uniform
-from bilby_xG.networks import InterferometerList
+from dingo.gw.gwutils import get_interferometer_list
 from torchvision.transforms import Compose
 from dingo.core.inference.steps import _n_rows
 from dingo.core.posterior_models import BasePosteriorModel
@@ -275,7 +275,7 @@ class GWSamplerContext:
         # from saved importance-sampling results), where a range that is illegal as
         # network input is legal for ASD masking. The analyzed detectors and the
         # PSD notches are checked at the same time.
-        ifo_names = [ifo.name for ifo in InterferometerList(detectors)]
+        ifo_names = [ifo.name for ifo in get_interferometer_list(detectors)]
         range_update = _frequency_range_update(domain, event_metadata, ifo_names)
         tokenization = data_settings.get("tokenization")
         if range_update is not None and tokenization is None:
@@ -670,7 +670,7 @@ class GWSamplerContext:
         # The likelihood sees the analyzed detectors only (the event data may carry
         # more, e.g. a stored three-detector event analyzed with two), keyed by arm
         # name for a triangular detector, as the data are.
-        ifo_names = [ifo.name for ifo in InterferometerList(self.detectors)]
+        ifo_names = [ifo.name for ifo in get_interferometer_list(self.detectors)]
         missing = [d for d in ifo_names if d not in self.event_data["waveform"]]
         if missing:
             raise ValueError(
