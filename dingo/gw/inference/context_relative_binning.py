@@ -78,7 +78,8 @@ class RelativeBinningSamplerContext(GWSamplerContext):
         for name, value in (conditioning or {}).items():
             if name in proxies:
                 v = torch.as_tensor(value, dtype=torch.float64).reshape(-1)
-                if not torch.allclose(v, torch.full_like(v, proxies[name]), rtol=0, atol=1e-9):
+                # the chain may hold the pins in float32 (relative precision 6e-8)
+                if not torch.allclose(v, torch.full_like(v, proxies[name]), rtol=1e-6, atol=1e-6):
                     raise ValueError(
                         f"{name} = {v[0].item()} differs from the proxy of the summary "
                         f"data ({proxies[name]}); compute summaries for this proxy."
