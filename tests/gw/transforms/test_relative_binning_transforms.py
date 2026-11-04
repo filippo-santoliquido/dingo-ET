@@ -103,3 +103,18 @@ def test_whitened_noise_is_unit():
     n = np.einsum("bij,kbj->kbi", L, z) / np.sqrt(1.0)  # covariance 2 Bmat
     x = np.linalg.solve(L, n[..., None])[..., 0]
     np.testing.assert_allclose(np.mean(np.abs(x) ** 2, axis=0), 2.0, rtol=0.02)
+
+
+@pytest.mark.parametrize("chirp_mass", [1.2, 2.5])
+def test_fiducial_at_equals_call(chirp_mass):
+    """FiducialPhase.at on other frequencies (a dense chunk) uses the same reference as
+    on the bin edges: equal at the edges inside the chunk, and smooth between them."""
+    edges = np.geomspace(3.0, 4096.0, 1500)
+    fid = FiducialPhase(WaveformGenerator(APPROX, RelativeBinningDomain(edges), F_REF), edges)
+    e, _ = fid(chirp_mass)
+    for lo, hi in ((90.0, 110.0), (900.0, 1400.0), (2000.0, 4096.0)):
+        chunk = np.unique(np.concatenate([np.linspace(lo, hi, 20001), edges[(edges >= lo) & (edges <= hi)]]))
+        ec = fid.at(chirp_mass, chunk)
+        i = np.searchsorted(chunk, edges[(edges >= lo) & (edges <= hi)])
+        np.testing.assert_allclose(ec[i], e[(edges >= lo) & (edges <= hi)], atol=1e-9)
+        assert np.max(np.abs(np.angle(ec[1:] / ec[:-1]))) < 0.5  # no jump at the cut

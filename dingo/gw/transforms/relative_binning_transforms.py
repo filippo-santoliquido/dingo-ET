@@ -66,15 +66,52 @@ class FiducialPhase:
         group_delay = np.angle(b / a) / (2 * self.df_star) / (2 * np.pi)
         h = hp[self.i_f]
         e = np.exp(1j * np.angle(h))
+        cont = self._continuation(h)
+        if cont is not None:
+            f_cut, f0, c = cont
+            above = self.f >= f_cut
+            e[above] = np.exp(1j * np.polyval(c, self.f[above] - f0))
+        return e, group_delay
+
+    def _continuation(self, h):
+        """(f_cut, f0, quadratic coefficients) of the phase continuation above the end
+        of inspiral, from h at self.f; None if the fiducial does not end."""
         amp = np.abs(h) * self.f ** (7 / 6)
         low = (amp < 0.01 * np.interp(20.0, self.f, amp)) & (self.f >= 20.0)
-        if low.any():
-            i_cut = int(np.argmax(low))
-            fit = slice(max(i_cut - 8, 0), i_cut)
-            x = self.f[fit] - self.f[i_cut - 1]
-            c = np.polyfit(x, np.unwrap(np.angle(h[fit])), 2)
-            e[i_cut:] = np.exp(1j * np.polyval(c, self.f[i_cut:] - self.f[i_cut - 1]))
-        return e, group_delay
+        if not low.any():
+            return None
+        i_cut = int(np.argmax(low))
+        fit = slice(max(i_cut - 8, 0), i_cut)
+        f0 = self.f[i_cut - 1]
+        c = np.polyfit(self.f[fit] - f0, np.unwrap(np.angle(h[fit])), 2)
+        return self.f[i_cut], f0, c
+
+    def at(self, chirp_mass, frequencies):
+        """exp(i Phi_fid) at any increasing frequencies inside [self.f[0], self.f[-1]]
+        (e.g. a chunk of the full data grid), with the end of inspiral and the
+        continuation fixed by self.f, so that it equals __call__ on self.f. LAL is
+        evaluated on self.f below the chunk + the chunk + self.f[-1] (no gap below,
+        the same last frequency)."""
+        f = np.asarray(frequencies, dtype=np.float64)
+        hp_self = self.wfg.generate_hplus_hcross(
+            dict(FIDUCIAL, chirp_mass=float(chirp_mass))
+        )["h_plus"][self.i_f]
+        cont = self._continuation(hp_self)
+        seq = np.unique(np.concatenate([self.f[self.f < f[0]], f, self.f[-1:]]))
+        domain = self.wfg.domain
+        try:
+            self.wfg.domain = RelativeBinningDomain(seq)
+            hp = self.wfg.generate_hplus_hcross(
+                dict(FIDUCIAL, chirp_mass=float(chirp_mass))
+            )["h_plus"][np.searchsorted(seq, f)]
+        finally:
+            self.wfg.domain = domain
+        e = np.exp(1j * np.angle(hp))
+        if cont is not None:
+            f_cut, f0, c = cont
+            above = f >= f_cut
+            e[above] = np.exp(1j * np.polyval(c, f[above] - f0))
+        return e
 
 
 def summarize_and_whiten(r, lt):
