@@ -21,16 +21,34 @@ class RelativeBinningDomain(BaseFrequencyDomain):
 
     Whitening is not a division by the ASD here: it is a 2 x 2 matrix per bin (see
     `SummarizeAndWhiten`). So `noise_std` is 1.
+
+    The edges and the per-bin Gram matrices are found by the code from the
+    hyperparameters in `settings` (`dingo.gw.dataset.relative_binning_bins`, at dataset
+    generation) and then stored with the domain.
     """
 
-    def __init__(self, bin_edges: Iterable[float]):
+    def __init__(
+        self,
+        bin_edges: Iterable[float],
+        gram: dict = None,
+        settings: dict = None,
+    ):
         """
         Parameters
         ----------
         bin_edges : Iterable[float]
             Strictly increasing bin edges [Hz]; at least two.
+        gram : dict
+            {detector: (B, 3) Gram entries (Bmat_00, Bmat_01, Bmat_11) per bin}.
+        settings : dict
+            Relative-binning hyperparameters (detectors, f_min, f_max, kernel, f_star,
+            bin_selection).
         """
         super().__init__()
+        self.gram = None if gram is None else {
+            k: np.asarray(v, dtype=np.float64) for k, v in gram.items()
+        }
+        self.settings = settings
         self._sample_frequencies = np.asarray(bin_edges, dtype=np.float64)
         if self._sample_frequencies.ndim != 1 or len(self._sample_frequencies) < 2:
             raise ValueError("bin_edges must be a 1D array with at least two edges.")
@@ -104,7 +122,9 @@ class RelativeBinningDomain(BaseFrequencyDomain):
 
     @property
     def domain_dict(self) -> dict:
-        return {
-            "type": "RelativeBinningDomain",
-            "bin_edges": self._sample_frequencies.tolist(),
-        }
+        d = {"type": "RelativeBinningDomain", "bin_edges": self._sample_frequencies.tolist()}
+        if self.gram is not None:
+            d["gram"] = {k: v.tolist() for k, v in self.gram.items()}
+        if self.settings is not None:
+            d["settings"] = self.settings
+        return d

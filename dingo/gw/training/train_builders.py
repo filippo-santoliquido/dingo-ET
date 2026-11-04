@@ -18,7 +18,6 @@ from dingo.gw.transforms.relative_binning_transforms import (
     FiducialPhase,
     RelativeBinningProxyConditioning,
     SummarizeAndWhiten,
-    load_gram,
 )
 from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.transforms import (
@@ -130,8 +129,13 @@ def set_train_transforms(
         for k in ("random_strain_cropping", "tokenization"):
             if k in data_settings:
                 raise NotImplementedError(f"{k} is not supported on a RelativeBinningDomain.")
-        rb_settings = data_settings["relative_binning"]
-        gram = load_gram(rb_settings, ifo_names, domain.num_bins)
+        # Kernel, f_star and the Gram matrices come with the domain (dataset).
+        if domain.gram is None or set(ifo_names) - set(domain.gram):
+            raise ValueError(
+                f"The RelativeBinningDomain has no Gram matrices for {ifo_names}; "
+                "generate the dataset with these detectors."
+            )
+        gram = {n: domain.gram[n] for n in ifo_names}
     else:
         # By passing the wfd domain when instantiating the noise dataset, this ensures
         # the domains will match. In particular, it truncates the ASD dataset beyond
@@ -171,14 +175,13 @@ def set_train_transforms(
     if relative_binning:
         # Proxies (Mc~, t*~) and the division by the reference at the bin edges.
         wg = wfd.settings["waveform_generator"]
-        fiducial_kwargs = wfd.settings["compression"]["relative_binning_reference"]
         transforms.append(
             RelativeBinningProxyConditioning(
-                rb_settings["kernel"],
+                domain.settings["kernel"],
                 FiducialPhase(
                     WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
                     domain(),
-                    **fiducial_kwargs,
+                    f_star=domain.settings.get("f_star", 100.0),
                 ),
                 ifo_names,
             )

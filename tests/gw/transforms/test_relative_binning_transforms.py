@@ -40,7 +40,7 @@ def test_chain_matches_exact_compression(seed):
              geocent_time=0.0)
     ext = dict(ra=1.1, dec=-0.4, psi=0.6, geocent_time=0.004, luminosity_distance=300.0)
 
-    # stored ratio (dataset option relative_binning_reference)
+    # stored ratio (as in a dataset on a RelativeBinningDomain)
     fid = FiducialPhase(WaveformGenerator(APPROX, rbd, F_REF), edges)
     e_true, _ = fid(p["chirp_mass"])
     pol = WaveformGenerator(APPROX, rbd, F_REF).generate_hplus_hcross(p)

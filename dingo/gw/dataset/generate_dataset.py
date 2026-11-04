@@ -1,5 +1,6 @@
 import argparse
 import copy
+import json
 import textwrap
 from multiprocessing import Pool
 from pathlib import Path
@@ -22,6 +23,7 @@ from dingo.gw.transforms.relative_binning_transforms import (
     DivideByFiducial,
     FiducialPhase,
 )
+from dingo.gw.dataset.relative_binning_bins import complete_relative_binning_domain
 from dingo.gw.waveform_generator import (
     NewInterfaceWaveformGenerator,
     WaveformGenerator,
@@ -159,6 +161,22 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
     """
 
     prior = build_prior_with_defaults(settings["intrinsic_prior"])
+    if (
+        settings["domain"]["type"] == "RelativeBinningDomain"
+        and "bin_edges" not in settings["domain"]
+    ):
+        # Bin edges and Gram matrices from the relative-binning hyperparameters
+        # (bilby_xG greedy selection); stored in the settings, so in the dataset file.
+        print("Selecting relative-binning bins (bilby_xG).")
+        settings["domain"], report = complete_relative_binning_domain(
+            settings["domain"],
+            settings["waveform_generator"],
+            prior,
+            ref_time=settings["domain"]["settings"].get("ref_time", 1.4e9),
+            num_processes=num_processes,
+        )
+        settings["domain"]["settings"]["bin_selection_report"] = report
+        print(f"...{report['n_bins']} bins.")
     domain = build_domain(settings["domain"])
 
     new_interface_flag = settings["waveform_generator"].get("new_interface", False)
@@ -175,8 +193,22 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
 
     dataset_dict = {"settings": settings}
 
+    compression_transforms = []
+    if isinstance(domain, RelativeBinningDomain):
+        # Always stored as h / exp(i Phi_fid(Mc)) at the bin edges (smooth; the training
+        # conditioning multiplies the fiducial back in float64).
+        wg = settings["waveform_generator"]
+        compression_transforms.append(
+            DivideByFiducial(
+                FiducialPhase(
+                    WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
+                    domain(),
+                    f_star=domain.settings.get("f_star", 100.0),
+                )
+            )
+        )
+        waveform_generator.transform = Compose(compression_transforms)
     if "compression" in settings:
-        compression_transforms = []
 
         if "whitening" in settings["compression"]:
             compression_transforms.append(
@@ -204,21 +236,6 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
                     domain,
                     inverse=False,
                     **settings["compression"]["phase_heterodyning"],
-                )
-            )
-
-        if "relative_binning_reference" in settings["compression"]:
-            # Relative-binning domain (ET BNS, Stage B): store h / exp(i Phi_fid(Mc)).
-            if not isinstance(domain, RelativeBinningDomain):
-                raise ValueError("relative_binning_reference needs a RelativeBinningDomain.")
-            wg = settings["waveform_generator"]
-            compression_transforms.append(
-                DivideByFiducial(
-                    FiducialPhase(
-                        WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
-                        domain(),
-                        **settings["compression"]["relative_binning_reference"],
-                    )
                 )
             )
 
@@ -337,6 +354,16 @@ def _generate_dataset_main(
 
     dataset = generate_dataset(settings, num_processes)
     dataset.to_file(str(out_file))
+    if settings["domain"]["type"] == "RelativeBinningDomain":
+        # The bin edges, the hyperparameters and the selection report, readable.
+        d = settings["domain"]
+        rb_file = Path(out_file).with_name(Path(out_file).stem + "_relative_binning.json")
+        rb_file.write_text(
+            json.dumps(
+                {"bin_edges": d["bin_edges"], "settings": d["settings"]}, indent=1
+            )
+        )
+        print(f"Wrote {rb_file}.")
 
 
 def main() -> None:

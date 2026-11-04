@@ -1,56 +1,88 @@
-"""Relative-binning summary data in the training path: a dataset generated with the
-`relative_binning_reference` compression, `set_train_transforms` on a
-RelativeBinningDomain (no ASD dataset), training samples and the embedding-network SVD."""
+"""Relative-binning summary data in the training path: the bin edges and Gram matrices are
+found by Dingo from hyperparameters (bilby_xG bin selection) at dataset generation and
+written to the dataset and a JSON file; then set_train_transforms on the RelativeBinningDomain
+(no ASD dataset), training samples and the embedding-network SVD."""
 
 import copy
+import json
 
 import bilby
 import numpy as np
 import pytest
+import yaml
 
-from dingo.gw.dataset.generate_dataset import generate_dataset
+from dingo.gw.dataset.generate_dataset import _generate_dataset_main
+from dingo.gw.dataset.waveform_dataset import WaveformDataset
+from dingo.gw.transforms.relative_binning_transforms import FiducialPhase
+from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.training.train_builders import (
     build_svd_for_embedding_network,
     set_train_transforms,
 )
 
-EDGES = np.geomspace(20.0, 1024.0, 121)
-NB = len(EDGES) - 1
+pytest.importorskip("bilby_xG")
 DETECTORS = ["H1", "L1"]
-
-
-def _gram():
-    """Gram matrices of a toy PSD (fine grid inside each bin; reference f^-7/6)."""
-    f = np.geomspace(EDGES[0], EDGES[-1], 200001)
-    b = np.clip(np.searchsorted(EDGES, f, side="right") - 1, 0, NB - 1)
-    u = (f - 0.5 * (EDGES[:-1] + EDGES[1:])[b]) / np.diff(EDGES)[b]
-    w = 4 * np.gradient(f) * f ** (-7 / 3) / (1e-48 * ((f / 30) ** -4 + 1 + (f / 300) ** 2))
-    g = np.stack([np.bincount(b, w * x, NB) for x in (1.0, u, u**2)], -1)
-    return {n: g.tolist() for n in DETECTORS}
+SETTINGS = {
+    "domain": {
+        "type": "RelativeBinningDomain",
+        "settings": {
+            "detectors": DETECTORS,
+            "f_min": 20.0,
+            "f_max": 1024.0,
+            "f_star": 100.0,
+            "kernel": {
+                "chirp_mass": "bilby.core.prior.Uniform(minimum=-3e-4, maximum=3e-4)",
+                "t_star": "bilby.core.prior.Uniform(minimum=-3e-3, maximum=3e-3)",
+            },
+            # small, for speed
+            "bin_selection": {"eta": 1.0, "n_train": 4, "n_validation": 2, "n_samples": 2,
+                              "n_grid": 3001, "snr_range": [10.0, 30.0]},
+        },
+    },
+    "waveform_generator": {"approximant": "IMRPhenomXAS_NRTidalv3", "f_ref": 100.0},
+    "intrinsic_prior": {
+        "chirp_mass": "bilby.gw.prior.UniformInComponentsChirpMass(minimum=2.0, maximum=2.6)",
+        "mass_ratio": "bilby.gw.prior.UniformInComponentsMassRatio(minimum=0.6, maximum=1.0)",
+        "chi_1": "bilby.gw.prior.AlignedSpin(a_prior=Uniform(0, 0.05))",
+        "chi_2": "bilby.gw.prior.AlignedSpin(a_prior=Uniform(0, 0.05))",
+        "lambda_1": "bilby.core.prior.Uniform(0, 3000)",
+        "lambda_2": "bilby.core.prior.Uniform(0, 3000)",
+        "theta_jn": "default",
+        "phase": "default",
+        "luminosity_distance": 100.0,
+        "geocent_time": 0.0,
+    },
+    "num_samples": 12,
+}
 
 
 @pytest.fixture(scope="module")
-def wfd():
+def generated(tmp_path_factory):
     bilby.core.utils.random.seed(3)
-    settings = {
-        "domain": {"type": "RelativeBinningDomain", "bin_edges": EDGES.tolist()},
-        "waveform_generator": {"approximant": "IMRPhenomXAS_NRTidalv3", "f_ref": 100.0},
-        "intrinsic_prior": {
-            "chirp_mass": "bilby.gw.prior.UniformInComponentsChirpMass(minimum=2.0, maximum=2.6)",
-            "mass_ratio": "bilby.gw.prior.UniformInComponentsMassRatio(minimum=0.6, maximum=1.0)",
-            "chi_1": "bilby.gw.prior.AlignedSpin(a_prior=Uniform(0, 0.05))",
-            "chi_2": "bilby.gw.prior.AlignedSpin(a_prior=Uniform(0, 0.05))",
-            "lambda_1": "bilby.core.prior.Uniform(0, 3000)",
-            "lambda_2": "bilby.core.prior.Uniform(0, 3000)",
-            "theta_jn": "default",
-            "phase": "default",
-            "luminosity_distance": 100.0,
-            "geocent_time": 0.0,
-        },
-        "num_samples": 12,
-        "compression": {"relative_binning_reference": {}},
-    }
-    return generate_dataset(settings, num_processes=1)
+    d = tmp_path_factory.mktemp("rb")
+    (d / "settings.yaml").write_text(yaml.safe_dump(SETTINGS))
+    _generate_dataset_main(str(d / "settings.yaml"), str(d / "wfd.hdf5"), num_processes=2)
+    return d
+
+
+def test_bins_found_and_written(generated):
+    wfd = WaveformDataset(file_name=str(generated / "wfd.hdf5"))
+    edges = wfd.domain.bin_edges
+    assert edges[0] == 20.0 and edges[-1] == 1024.0 and len(edges) > 10
+    assert set(wfd.domain.gram) == set(DETECTORS)
+    assert wfd.domain.gram["H1"].shape == (len(edges) - 1, 3)
+    rb = json.loads((generated / "wfd_relative_binning.json").read_text())
+    np.testing.assert_array_equal(rb["bin_edges"], edges)
+    report = rb["settings"]["bin_selection_report"]
+    assert report["n_bins"] == len(edges) - 1 and len(report["validation"]) == 2
+    # the stored waveform is h / exp(i Phi_fid(Mc)) at the edges
+    p = wfd.parameters.iloc[0].to_dict()
+    wg = SETTINGS["waveform_generator"]
+    h = WaveformGenerator(wg["approximant"], wfd.domain, wg["f_ref"]).generate_hplus_hcross(p)
+    e, _ = FiducialPhase(WaveformGenerator(wg["approximant"], wfd.domain, wg["f_ref"]),
+                         edges)(p["chirp_mass"])
+    np.testing.assert_allclose(wfd.polarizations["h_plus"][0], h["h_plus"] * np.conj(e),
+                               rtol=1e-6, atol=1e-30)
 
 
 def _data_settings():
@@ -65,18 +97,13 @@ def _data_settings():
         },
         "ref_time": 1126259462.391,
         "inference_parameters": ["delta_chirp_mass", "mass_ratio", "geocent_time"],
-        "relative_binning": {
-            "kernel": {
-                "chirp_mass": "bilby.core.prior.Uniform(minimum=-3e-4, maximum=3e-4)",
-                "t_star": "bilby.core.prior.Uniform(minimum=-3e-3, maximum=3e-3)",
-            },
-            "gram": _gram(),
-        },
     }
 
 
-def test_training_samples(wfd):
+def test_training_samples(generated):
     bilby.core.utils.random.seed(4)
+    wfd = WaveformDataset(file_name=str(generated / "wfd.hdf5"), precision="single")
+    nb = wfd.domain.num_bins
     data_settings = _data_settings()
     set_train_transforms(wfd, data_settings, asd_dataset_path=None)
     assert data_settings["context_parameters"] == ["chirp_mass_proxy", "t_star_proxy"]
@@ -87,21 +114,16 @@ def test_training_samples(wfd):
     assert -1.1 < mean["t_star_proxy"] < -0.5 and 0 < std["t_star_proxy"] < 0.2
     theta, x, context = wfd[0]
     assert theta.shape == (3,) and context.shape == (2,)
-    assert x.shape == (len(DETECTORS), 3, 2 * NB)
+    assert x.shape == (len(DETECTORS), 3, 2 * nb)
     # the third (ASD) channel is a constant: one fixed PSD, whitening is in the summary
     assert np.all(np.isfinite(x)) and np.all(x[:, 2] == x[0, 2, 0])
 
-
-def test_embedding_svd(wfd):
     bilby.core.utils.random.seed(5)
     V = build_svd_for_embedding_network(
         copy.deepcopy(wfd), _data_settings(), None, size=4,
         num_training_samples=8, num_validation_samples=2, batch_size=4,
     )
-    assert len(V) == len(DETECTORS) and V[0].shape == (2 * NB, 4)
+    assert len(V) == len(DETECTORS) and V[0].shape == (2 * nb, 4)
 
-
-def test_cropping_refused(wfd):
-    data_settings = _data_settings() | {"random_strain_cropping": {}}
     with pytest.raises(NotImplementedError):
-        set_train_transforms(wfd, data_settings, asd_dataset_path=None)
+        set_train_transforms(wfd, _data_settings() | {"random_strain_cropping": {}}, None)

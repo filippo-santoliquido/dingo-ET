@@ -107,8 +107,8 @@ def whitening_from_gram(gram):
 class RelativeBinningProxyConditioning(GNPEBase):
     """Prior conditioning on (Mc~, t*~) and division by the reference waveform.
 
-    The stored polarizations are h / exp(i Phi_fid(f; Mc)) at the bin edges (dataset
-    option `relative_binning_reference`). This transform draws the proxies
+    The stored polarizations are h / exp(i Phi_fid(f; Mc)) at the bin edges (every
+    dataset on a RelativeBinningDomain). This transform draws the proxies
         chirp_mass_proxy = chirp_mass + eps_Mc,
         t_star_proxy = t* + eps_t,  t* = mean detector time - group delay of h at f_star,
     and returns the polarizations divided by h_ref(Mc~, t*~) at the edges, so that the
@@ -225,16 +225,3 @@ class DivideByFiducial:
         sample["waveform"] = {k: v * e for k, v in sample["waveform"].items()}
         return sample
 
-
-def load_gram(rb_settings, ifo_names, num_bins):
-    """Gram matrices (B, 3) per detector from rb_settings["gram"] (lists) or, the first
-    time, from rb_settings["gram_file"] (npz, one array per detector); they are then
-    stored in rb_settings["gram"] so that a trained model carries them."""
-    if "gram" not in rb_settings:
-        with np.load(rb_settings["gram_file"]) as f:
-            rb_settings["gram"] = {n: f[n].tolist() for n in ifo_names}
-    gram = {n: np.asarray(rb_settings["gram"][n], dtype=np.float64) for n in ifo_names}
-    for n, g in gram.items():
-        if g.shape != (num_bins, 3):
-            raise ValueError(f"Gram of {n} has shape {g.shape}, expected ({num_bins}, 3).")
-    return gram
