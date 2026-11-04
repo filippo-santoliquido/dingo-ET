@@ -14,10 +14,14 @@ from threadpoolctl import threadpool_limits
 from torchvision.transforms import Compose
 
 from dingo.gw.dataset.waveform_dataset import WaveformDataset
-from dingo.gw.domains import build_domain
+from dingo.gw.domains import RelativeBinningDomain, build_domain
 from dingo.gw.prior import build_prior_with_defaults
 from dingo.gw.SVD import ApplySVD, SVDBasis
 from dingo.gw.transforms import HeterodynePhase, WhitenFixedASD
+from dingo.gw.transforms.relative_binning_transforms import (
+    DivideByFiducial,
+    FiducialPhase,
+)
 from dingo.gw.waveform_generator import (
     NewInterfaceWaveformGenerator,
     WaveformGenerator,
@@ -200,6 +204,21 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
                     domain,
                     inverse=False,
                     **settings["compression"]["phase_heterodyning"],
+                )
+            )
+
+        if "relative_binning_reference" in settings["compression"]:
+            # Relative-binning domain (ET BNS, Stage B): store h / exp(i Phi_fid(Mc)).
+            if not isinstance(domain, RelativeBinningDomain):
+                raise ValueError("relative_binning_reference needs a RelativeBinningDomain.")
+            wg = settings["waveform_generator"]
+            compression_transforms.append(
+                DivideByFiducial(
+                    FiducialPhase(
+                        WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
+                        domain(),
+                        **settings["compression"]["relative_binning_reference"],
+                    )
                 )
             )
 

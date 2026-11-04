@@ -209,3 +209,32 @@ class SummarizeAndWhiten:
             k: np.ones(v.shape, dtype=np.float32) for k, v in sample["waveform"].items()
         }
         return sample
+
+
+class DivideByFiducial:
+    """Dataset compression: polarizations at the bin edges divided by exp(i Phi_fid) at
+    each waveform's own chirp mass, so that the stored ratio is smooth (SVD).
+    `RelativeBinningProxyConditioning` multiplies it back in float64."""
+
+    def __init__(self, fiducial_phase):
+        self.fid = fiducial_phase
+
+    def __call__(self, input_sample):
+        sample = input_sample.copy()
+        e = np.conj(self.fid(sample["parameters"]["chirp_mass"])[0])
+        sample["waveform"] = {k: v * e for k, v in sample["waveform"].items()}
+        return sample
+
+
+def load_gram(rb_settings, ifo_names, num_bins):
+    """Gram matrices (B, 3) per detector from rb_settings["gram"] (lists) or, the first
+    time, from rb_settings["gram_file"] (npz, one array per detector); they are then
+    stored in rb_settings["gram"] so that a trained model carries them."""
+    if "gram" not in rb_settings:
+        with np.load(rb_settings["gram_file"]) as f:
+            rb_settings["gram"] = {n: f[n].tolist() for n in ifo_names}
+    gram = {n: np.asarray(rb_settings["gram"][n], dtype=np.float64) for n in ifo_names}
+    for n, g in gram.items():
+        if g.shape != (num_bins, 3):
+            raise ValueError(f"Gram of {n} has shape {g.shape}, expected ({num_bins}, 3).")
+    return gram

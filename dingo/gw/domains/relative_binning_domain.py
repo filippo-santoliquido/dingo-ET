@@ -45,6 +45,15 @@ class RelativeBinningDomain(BaseFrequencyDomain):
                 "RelativeBinningDomain cannot be truncated or changed."
             )
 
+    def update_data(self, data: np.ndarray, axis: int = -1, low_value: float = 0.0):
+        """Data on the bin edges need no adjustment; only the length is checked."""
+        if data.shape[axis] != len(self):
+            raise ValueError(
+                f"Data length {data.shape[axis]} along axis {axis} does not match the "
+                f"{len(self)} bin edges."
+            )
+        return data
+
     @property
     def sample_frequencies(self) -> np.ndarray:
         return self._sample_frequencies
