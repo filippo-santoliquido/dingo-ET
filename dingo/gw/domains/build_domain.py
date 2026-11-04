@@ -2,6 +2,7 @@ from dingo.gw.domains import (
     Domain,
     UniformFrequencyDomain,
     MultibandedFrequencyDomain,
+    RelativeBinningDomain,
     TimeDomain,
 )
 
@@ -32,6 +33,8 @@ def build_domain(settings: dict) -> Domain:
         return UniformFrequencyDomain(**kwargs)
     elif settings["type"] in ["MultibandedFrequencyDomain", "MFD"]:
         return MultibandedFrequencyDomain(**kwargs)
+    elif settings["type"] == "RelativeBinningDomain":
+        return RelativeBinningDomain(**kwargs)
     elif settings["type"] in ["TimeDomain", "TD"]:
         return TimeDomain(**kwargs)
     else:

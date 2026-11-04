@@ -27,6 +27,7 @@ from dingo.gw.domains import (
     Domain,
     UniformFrequencyDomain,
     MultibandedFrequencyDomain,
+    RelativeBinningDomain,
     TimeDomain,
 )
 from dingo.gw.transforms.waveform_transforms import DecimateAll
@@ -208,6 +209,13 @@ class WaveformGenerator:
     @domain.setter
     def domain(self, value):
         self._domain = value
+        if isinstance(
+            self._domain, RelativeBinningDomain
+        ) and not LS.SimInspiralImplementedFDApproximants(self.approximant):
+            raise ValueError(
+                "RelativeBinningDomain needs a frequency-domain approximant: there is "
+                "no base domain to decimate from."
+            )
         if isinstance(
             self._domain, MultibandedFrequencyDomain
         ) and not LS.SimInspiralImplementedFDApproximants(self.approximant):
@@ -432,7 +440,8 @@ class WaveformGenerator:
 
         # Generate GW polarizations
         if isinstance(
-            self.domain, (UniformFrequencyDomain, MultibandedFrequencyDomain)
+            self.domain,
+            (UniformFrequencyDomain, MultibandedFrequencyDomain, RelativeBinningDomain),
         ):
             wf_generator = self.generate_FD_waveform
         elif isinstance(self.domain, TimeDomain):
@@ -537,7 +546,9 @@ class WaveformGenerator:
         if target_function is None:
             if isinstance(self.domain, UniformFrequencyDomain):
                 target_function = "SimInspiralFD"
-            elif isinstance(self.domain, MultibandedFrequencyDomain):
+            elif isinstance(
+                self.domain, (MultibandedFrequencyDomain, RelativeBinningDomain)
+            ):
                 target_function = "SimInspiralChooseFDWaveformSequence"
             elif isinstance(self.domain, TimeDomain):
                 target_function = "SimInspiralTD"
