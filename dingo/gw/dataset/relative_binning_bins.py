@@ -193,6 +193,9 @@ def complete_relative_binning_domain(domain_settings, waveform_generator_setting
                         f_star=s.get("f_star", 100.0))
     intrinsic_keys = [k for k in ("chirp_mass", "mass_ratio", "chi_1", "chi_2", "lambda_1", "lambda_2")]
     keys = intrinsic_keys + ["log_distance", "theta_jn", "phase", "geocent_time", "ra", "dec", "psi"]
+    import bilby
+
+    bilby.core.utils.random.seed(sel["seed"])  # prior widths: reproducible bins
     draws = intrinsic_prior.sample(2000)
     width = {k: np.std(draws[k]) if k in draws else None for k in keys}
     width.update(log_distance=1.0, theta_jn=np.pi / np.sqrt(12), phase=2 * np.pi / np.sqrt(12),

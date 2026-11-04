@@ -127,3 +127,18 @@ def test_training_samples(generated):
 
     with pytest.raises(NotImplementedError):
         set_train_transforms(wfd, _data_settings() | {"random_strain_cropping": {}}, None)
+
+
+def test_bin_selection_is_reproducible():
+    """Same hyperparameters and seed give the same bins (also after other bilby draws)."""
+    from dingo.gw.dataset.relative_binning_bins import complete_relative_binning_domain
+    from dingo.gw.prior import build_prior_with_defaults
+
+    prior = build_prior_with_defaults(SETTINGS["intrinsic_prior"])
+    out = []
+    for seed in (11, 12):
+        bilby.core.utils.random.seed(seed)  # global state before the call must not matter
+        d, _ = complete_relative_binning_domain(
+            SETTINGS["domain"], SETTINGS["waveform_generator"], prior, num_processes=2)
+        out.append(d["bin_edges"])
+    assert out[0] == out[1]
