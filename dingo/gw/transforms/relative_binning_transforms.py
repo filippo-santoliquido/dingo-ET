@@ -225,3 +225,26 @@ class DivideByFiducial:
         sample["waveform"] = {k: v * e for k, v in sample["waveform"].items()}
         return sample
 
+
+
+class WhitenSummary:
+    """Event summary data A (2B per detector: A_0 of all bins, then A_1) -> whitened
+    x = L^-1 A per bin (the network input; for noise-free A = Bmat q this equals the
+    training input L^T q); unit-ASD channel as in training."""
+
+    def __init__(self, gram_dict):
+        """gram_dict: {ifo name: (B, 3) Gram entries per bin}."""
+        self.L = {k: np.swapaxes(whitening_from_gram(v), -1, -2) for k, v in gram_dict.items()}
+
+    def __call__(self, input_sample):
+        sample = input_sample.copy()
+        out = {}
+        for k, a in sample["waveform"].items():
+            L = self.L[k]
+            a = np.asarray(a).reshape(*np.shape(a)[:-1], 2, L.shape[0])
+            a = np.swapaxes(a, -1, -2)[..., None]  # (..., B, 2, 1)
+            x = np.linalg.solve(L, a)[..., 0]
+            out[k] = np.swapaxes(x, -1, -2).reshape(*x.shape[:-2], -1)
+        sample["waveform"] = out
+        sample["asds"] = {k: np.ones(v.shape, dtype=np.float32) for k, v in out.items()}
+        return sample

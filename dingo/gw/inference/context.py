@@ -233,6 +233,18 @@ class GWSamplerContext:
         GWSamplerContext
         """
         data_settings = metadata["train_settings"]["data"]
+        if (
+            cls is GWSamplerContext
+            and metadata["dataset_settings"]["domain"]["type"] == "RelativeBinningDomain"
+        ):
+            # Summary data at fixed proxies: their own context class.
+            from dingo.gw.inference.context_relative_binning import (
+                RelativeBinningSamplerContext,
+            )
+
+            return RelativeBinningSamplerContext.from_model_metadata(
+                metadata, event_data, event_metadata, device
+            )
 
         domain = build_domain(metadata["dataset_settings"]["domain"])
         if "domain_update" in data_settings:
