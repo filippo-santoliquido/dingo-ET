@@ -9,11 +9,17 @@ from threadpoolctl import threadpool_limits
 
 from dingo.core.utils import *
 from dingo.gw.dataset.waveform_dataset import WaveformDataset
-from dingo.gw.domains import build_domain
+from dingo.gw.domains import RelativeBinningDomain, build_domain
 from dingo.gw.gwutils import *
 from dingo.gw.noise.asd_dataset import ASDDataset
 from dingo.gw.prior import default_inference_parameters
 from dingo.gw.SVD import SVDBasis
+from dingo.gw.transforms.relative_binning_transforms import (
+    FiducialPhase,
+    RelativeBinningProxyConditioning,
+    SummarizeAndWhiten,
+)
+from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.transforms import (
     AddWhiteNoiseComplex,
     CropMaskStrainRandom,
@@ -110,17 +116,37 @@ def set_train_transforms(
     ifo_list = get_interferometer_list(data_settings["detectors"])
     ifo_names = [ifo.name for ifo in ifo_list]
 
-    # By passing the wfd domain when instantiating the noise dataset, this ensures the
-    # domains will match. In particular, it truncates the ASD dataset beyond the new
-    # f_max, and sets it to 1 below f_min.
-    asd_dataset = ASDDataset(
-        asd_dataset_path,
-        ifos=ifo_names,
-        precision="single",
-        domain_update=wfd.domain.domain_dict,
-    )
-    assert wfd.domain == asd_dataset.domain
     domain = wfd.domain
+    # Relative-binning summary data (ET BNS, Stage B): one fixed PSD enters through the
+    # per-bin Gram matrices; there is no ASD dataset.
+    relative_binning = isinstance(domain, RelativeBinningDomain)
+    if relative_binning:
+        if chirp_prior_conditioning_settings(data_settings) is not None:
+            raise ValueError(
+                "Use relative_binning.kernel, not chirp_prior_conditioning, on a "
+                "RelativeBinningDomain."
+            )
+        for k in ("random_strain_cropping", "tokenization"):
+            if k in data_settings:
+                raise NotImplementedError(f"{k} is not supported on a RelativeBinningDomain.")
+        # Kernel, f_star and the Gram matrices come with the domain (dataset).
+        if domain.gram is None or set(ifo_names) - set(domain.gram):
+            raise ValueError(
+                f"The RelativeBinningDomain has no Gram matrices for {ifo_names}; "
+                "generate the dataset with these detectors."
+            )
+        gram = {n: domain.gram[n] for n in ifo_names}
+    else:
+        # By passing the wfd domain when instantiating the noise dataset, this ensures
+        # the domains will match. In particular, it truncates the ASD dataset beyond
+        # the new f_max, and sets it to 1 below f_min.
+        asd_dataset = ASDDataset(
+            asd_dataset_path,
+            ifos=ifo_names,
+            precision="single",
+            domain_update=wfd.domain.domain_dict,
+        )
+        assert wfd.domain == asd_dataset.domain
 
     extrinsic_prior_dict = get_extrinsic_prior_dict(data_settings["extrinsic_prior"])
     if data_settings["inference_parameters"] == "default":
@@ -143,6 +169,21 @@ def set_train_transforms(
                 d["kernel"],
                 d["exact_equiv"],
                 inference=False,
+            )
+        )
+        extra_context_parameters += transforms[-1].context_parameters
+    if relative_binning:
+        # Proxies (Mc~, t*~) and the division by the reference at the bin edges.
+        wg = wfd.settings["waveform_generator"]
+        transforms.append(
+            RelativeBinningProxyConditioning(
+                domain.settings["kernel"],
+                FiducialPhase(
+                    WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
+                    domain(),
+                    f_star=domain.settings.get("f_star", 100.0),
+                ),
+                ifo_names,
             )
         )
         extra_context_parameters += transforms[-1].context_parameters
@@ -199,8 +240,11 @@ def set_train_transforms(
         data_settings["standardization"] = standardization_dict
 
     transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
-    transforms.append(SampleNoiseASD(asd_dataset))
-    transforms.append(WhitenAndScaleStrain(domain.noise_std))
+    if relative_binning:
+        transforms.append(SummarizeAndWhiten(gram))
+    else:
+        transforms.append(SampleNoiseASD(asd_dataset))
+        transforms.append(WhitenAndScaleStrain(domain.noise_std))
     # We typically add white detector noise. For debugging purposes, this can be turned
     # off with zero_noise option in data_settings.
     if not data_settings.get("zero_noise", False):
