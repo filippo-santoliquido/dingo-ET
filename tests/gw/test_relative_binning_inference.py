@@ -139,3 +139,68 @@ def test_context(wfd):
     assert isinstance(ctx.likelihood(), RelativeBinningLikelihood)
     with pytest.raises(ValueError):
         ctx.prepared_data({"chirp_mass_proxy": torch.tensor([proxies["chirp_mass_proxy"] + 1e-3])})
+
+
+def _conditioned(wfd, proxies):
+    """Training chain on row 0 up to the proxy conditioning (EXT, fixed proxies)."""
+    p = wfd.parameters.iloc[0].to_dict()
+    stored = {k: v[0] for k, v in wfd.polarizations.items()}
+    wg = wfd.settings["waveform_generator"]
+    fid = FiducialPhase(WaveformGenerator(wg["approximant"], wfd.domain, wg["f_ref"]),
+                        wfd.domain())
+    ifos = get_interferometer_list(DETECTORS)
+    s = {"parameters": dict(p), "waveform": stored,
+         "extrinsic_parameters": dict(EXT, **proxies)}
+    s = GetDetectorTimes(ifos, REF_TIME)(s)
+    return RelativeBinningProxyConditioning(KERNEL, fid, DETECTORS)(s), p
+
+
+def test_delta_t_star_in_training(wfd):
+    proxies = {"chirp_mass_proxy": float(wfd.parameters.iloc[0]["chirp_mass"]),
+               "t_star_proxy": -0.5}
+    s, _ = _conditioned(wfd, proxies)
+    ext = s["extrinsic_parameters"]
+    assert ext["delta_t_star"] == pytest.approx(ext["t_star"] - proxies["t_star_proxy"], abs=1e-12)
+    # standardization path (no waveform): delta_t_star = -kernel draw, inside the kernel
+    p = wfd.parameters.iloc[0].to_dict()
+    s = {"parameters": dict(p), "extrinsic_parameters": dict(EXT)}
+    s = GetDetectorTimes(get_interferometer_list(DETECTORS), REF_TIME)(s)
+    wg = wfd.settings["waveform_generator"]
+    fid = FiducialPhase(WaveformGenerator(wg["approximant"], wfd.domain, wg["f_ref"]),
+                        wfd.domain())
+    ext = RelativeBinningProxyConditioning(KERNEL, fid, DETECTORS)(s)["extrinsic_parameters"]
+    assert abs(ext["delta_t_star"]) <= 3e-3
+
+
+def test_t_star_to_geocent_time(wfd):
+    from types import SimpleNamespace
+
+    from dingo.gw.inference.steps_relative_binning import (
+        TStarToGeocentTime, relative_binning_time_steps)
+
+    proxies = {"chirp_mass_proxy": float(wfd.parameters.iloc[0]["chirp_mass"]),
+               "t_star_proxy": -0.5}
+    s, p = _conditioned(wfd, proxies)
+    t_star = s["extrinsic_parameters"]["t_star"]
+    metadata = {"dataset_settings": wfd.settings,
+                "train_settings": {"data": {"detectors": DETECTORS, "ref_time": REF_TIME}}}
+    step = TStarToGeocentTime(metadata)
+    ctx = SimpleNamespace(t_ref=REF_TIME)
+    keys = ["chirp_mass", "mass_ratio", "chi_1", "chi_2", "lambda_1", "lambda_2"]
+    given = {k: torch.tensor([p[k]], dtype=torch.float64) for k in keys}
+    given.update({"ra@t_ref": torch.tensor([EXT["ra"]], dtype=torch.float64),
+                  "dec": torch.tensor([EXT["dec"]], dtype=torch.float64),
+                  "t_star": torch.tensor([t_star], dtype=torch.float64)})
+    # the training definition of t* (true phase and inclination) maps back to the true
+    # geocent_time: the neutral phase and inclination of the step do not change G
+    tc = step.forward(given, ctx)["geocent_time"]
+    assert tc.item() == pytest.approx(EXT["geocent_time"], abs=1e-9)
+    back = step.inverse({"geocent_time": tc}, ctx, given)["t_star"]
+    assert back.item() == pytest.approx(t_star, abs=1e-9)
+    # the chain gets the step only for a delta_t_star network with the t* proxy
+    assert len(relative_binning_time_steps(
+        metadata, ["delta_chirp_mass", "delta_t_star"],
+        ["chirp_mass_proxy", "t_star_proxy"])) == 1
+    assert relative_binning_time_steps(
+        metadata, ["delta_chirp_mass", "geocent_time"],
+        ["chirp_mass_proxy", "t_star_proxy"]) == []

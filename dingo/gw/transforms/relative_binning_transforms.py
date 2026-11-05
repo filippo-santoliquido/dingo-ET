@@ -207,6 +207,7 @@ class RelativeBinningProxyConditioning(GNPEBase):
                 ext["chirp_mass_proxy"] = mc + self.kernel["chirp_mass"].sample()
                 ext["t_star_proxy"] = t_star + self.kernel["t_star"].sample()
                 ext["delta_chirp_mass"] = mc - ext["chirp_mass_proxy"]
+                ext["delta_t_star"] = t_star - ext["t_star_proxy"]
             sample["extrinsic_parameters"] = ext
             return sample
         wf = sample["waveform"]
@@ -226,6 +227,10 @@ class RelativeBinningProxyConditioning(GNPEBase):
         ext["chirp_mass_proxy"], ext["t_star_proxy"] = mc_p, t_p
         ext["delta_chirp_mass"] = mc - mc_p
         ext["t_star"] = t_star
+        # Offset of t* from its proxy (-kernel draw): a network that infers it needs no
+        # absolute time from the proxy input (RUN_LOG 2026-11-05); geocent_time is
+        # rebuilt after sampling (inference.steps_relative_binning.TStarToGeocentTime).
+        ext["delta_t_star"] = t_star - t_p
         sample["extrinsic_parameters"] = ext
         return sample
 

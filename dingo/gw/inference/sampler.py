@@ -21,6 +21,7 @@ from dingo.gw.inference.steps import (
     GNPEKernelFactor,
     RAToEventFrame,
 )
+from dingo.gw.inference.steps_relative_binning import relative_binning_time_steps
 
 
 def _ra_aliases(inference_parameters: list[str]) -> dict[str, str]:
@@ -100,6 +101,11 @@ def single_network_steps(model, prior) -> list:
         ([RAToTrainingFrame()] if ra_pinned else [])
         + [flow]
         + _proxy_offset_steps(inference_parameters, context_parameters)
+        # Relative binning: t* (from delta_t_star) -> geocent_time, in the training
+        # sky frame, so before the rotation to the event frame.
+        + relative_binning_time_steps(
+            model.base_metadata, inference_parameters, context_parameters
+        )
         + ([RAToEventFrame()] if ra_pinned else [])
         + _ra_to_event_steps(inference_parameters)
         + _delta_prior_steps(prior, inference_parameters)
