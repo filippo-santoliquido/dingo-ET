@@ -128,6 +128,15 @@ def test_training_samples(generated):
     with pytest.raises(NotImplementedError):
         set_train_transforms(wfd, _data_settings() | {"random_strain_cropping": {}}, None)
 
+    # Frequency-dependent response (Stage C): needs bilby_xG detectors; H1/L1 are bilby's.
+    response = {"earth_rotation_time_delay": True, "earth_rotation_beam_patterns": True,
+                "finite_size": True}
+    set_train_transforms(wfd, _data_settings() | {"detector_response": response}, None)
+    with pytest.raises(TypeError, match="bilby_xG"):
+        wfd[0]
+    with pytest.raises(NotImplementedError):
+        set_train_transforms(wfd, _data_settings() | {"detector_response": {"orbital_motion": True}}, None)
+
 
 def test_bin_selection_is_reproducible():
     """Same hyperparameters and seed give the same bins (also after other bilby draws)."""

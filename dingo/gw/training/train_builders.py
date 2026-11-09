@@ -33,6 +33,7 @@ from dingo.gw.transforms import (
     MaskRandomTokens,
     NormalizePosition,
     ProjectOntoDetectors,
+    ProjectOntoDetectorsFrequencyDependent,
     RepackageStrainsAndASDS,
     SampleExtrinsicParameters,
     SampleNoiseASD,
@@ -136,6 +137,11 @@ def set_train_transforms(
                 "generate the dataset with these detectors."
             )
         gram = {n: domain.gram[n] for n in ifo_names}
+    elif "detector_response" in data_settings:
+        raise NotImplementedError(
+            "detector_response (frequency-dependent response) is implemented for a "
+            "RelativeBinningDomain only."
+        )
     else:
         # By passing the wfd domain when instantiating the noise dataset, this ensures
         # the domains will match. In particular, it truncates the ASD dataset beyond
@@ -239,7 +245,15 @@ def set_train_transforms(
         )
         data_settings["standardization"] = standardization_dict
 
-    transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
+    if data_settings.get("detector_response"):
+        # Earth rotation and finite arm length, from bilby_xG (dingo.gw.detector_response).
+        transforms.append(
+            ProjectOntoDetectorsFrequencyDependent(
+                ifo_list, domain, ref_time, data_settings["detector_response"]
+            )
+        )
+    else:
+        transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
     if relative_binning:
         transforms.append(SummarizeAndWhiten(gram))
     else:
