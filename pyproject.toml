@@ -28,6 +28,8 @@ dependencies = [
     "astropy",
     "bilby",
     "bilby_pipe",
+    # next-generation detectors and relative-binning bin selection (ET BNS, Stage B)
+    "bilby_xG @ git+https://github.com/jacopok/bilby_xG.git@a2ffa07c62380fcd3901ba36bebf7384a4a2134f",
     "configargparse",
     "corner",
     "glasflow",
