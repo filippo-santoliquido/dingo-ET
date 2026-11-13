@@ -41,6 +41,29 @@ FISHER_STEPS = dict(
 _STATE = {}
 
 
+def _fd_pair(x, step, lo, hi):
+    """Points (x_minus, x_plus) of a finite difference of step `step` at x, inside [lo, hi].
+
+    Central (x - step, x + step) if both are inside the prior bounds; else one-sided:
+    (x, x + step) at the lower bound, (x - step, x) at the upper bound. A central step can
+    leave the prior near an edge, e.g. Lambda - 1 < 0, which NRTidal rejects.
+    """
+    if x - step >= lo and x + step <= hi:
+        return x - step, x + step
+    if x + step <= hi:
+        return x, x + step
+    if x - step >= lo:
+        return x - step, x
+    raise ValueError(f"Finite-difference step {step} does not fit in [{lo}, {hi}].")
+
+
+def _prior_bounds(prior, key):
+    """(minimum, maximum) of prior[key], or (-inf, inf) if the key or the bounds are absent."""
+    p = prior[key] if key in prior else None
+    lo, hi = getattr(p, "minimum", -np.inf), getattr(p, "maximum", np.inf)
+    return (-np.inf if lo is None else float(lo)), (np.inf if hi is None else float(hi))
+
+
 def _strain(f, theta):
     """(n_ifo, n_f) detector strain on the selection grid f (= _STATE["f"]) of parameters
     theta (dict with log_distance), and the polarizations."""
@@ -110,12 +133,15 @@ def _point(job):
     h0, pol0 = _strain(f, theta)
     # Fisher matrix, plus the prior widths as a Gaussian precision
     v0 = np.array([theta[key] for key in keys])
-    jac = []
+    jac, one_sided = [], []
     for i, key in enumerate(keys):
         tp, tm = dict(theta), dict(theta)
-        tp[key] += FISHER_STEPS[key]
-        tm[key] -= FISHER_STEPS[key]
-        jac.append((_strain(f, tp)[0] - _strain(f, tm)[0]) / (2 * FISHER_STEPS[key]))
+        tm[key], tp[key] = _fd_pair(theta[key], FISHER_STEPS[key], *st["bounds"][i])
+        central = theta[key] not in (tm[key], tp[key])
+        if not central:
+            one_sided.append(key)
+        denom = (2 if central else 1) * FISHER_STEPS[key]
+        jac.append((_strain(f, tp)[0] - _strain(f, tm)[0]) / denom)
     jac = np.array(jac)
     F = 4 * np.real(np.einsum("adf,bdf,df,f->ab", jac.conj(), jac, 1 / psd, w))
     F += np.diag(1 / st["prior_sd"] ** 2)
@@ -139,7 +165,8 @@ def _point(job):
     model = GridModel(st["projector"], proxy, f, second_order=True, data=h0)
     model.projector = None
     points = [GridPoint(model, h[:, None, :]) for h in [h0] + [kept[i] for i in pick]]
-    return dict(k=k, snr=float(np.sqrt(network_snr2(h0))), n_samples=len(points) - 1), points
+    return dict(k=k, snr=float(np.sqrt(network_snr2(h0))), n_samples=len(points) - 1,
+                one_sided=one_sided), points
 
 
 def gram_matrices(edges, ifos, n_fine=4_000_001):
@@ -207,6 +234,8 @@ def complete_relative_binning_domain(domain_settings, waveform_generator_setting
     _STATE.update(
         f=f, ifos=ifos, ref_time=ref_time, sel=sel, keys=keys, intrinsic_keys=intrinsic_keys,
         prior=intrinsic_prior, prior_sd=np.array([width[k] for k in keys]), lo=lo, hi=hi,
+        bounds=[_prior_bounds(intrinsic_prior, k) if k in intrinsic_keys else (-np.inf, np.inf)
+                for k in keys],
         psd=np.array([ifo.power_spectral_density.get_power_spectral_density_array(f) for ifo in ifos]),
         wfg=WaveformGenerator(approx, RelativeBinningDomain(f), f_ref),
         fid=fid, i_star=int(np.searchsorted(f, fid.f_star)), projector=_Reference(ifos),
@@ -223,7 +252,8 @@ def complete_relative_binning_domain(domain_settings, waveform_generator_setting
     idx = select_bins(train, sel["eta"])
     edges = f[idx]
     report = dict(n_bins=len(edges) - 1, time_points_s=time.time() - t0,
-                  points=[r for r, _ in results], validation=[])
+                  points=[r for r, _ in results], validation=[],
+                  one_sided_steps=sum(len(r["one_sided"]) for r, _ in results))
     for r, pts in results[sel["n_train"]:]:
         err = np.array([p.total_error(idx) for p in pts])
         report["validation"].append(dict(
