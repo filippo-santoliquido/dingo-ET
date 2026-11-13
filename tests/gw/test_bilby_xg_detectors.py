@@ -64,7 +64,8 @@ def test_et_l_detectors_from_bilby_xg():
         assert isinstance(ifo, XGInterferometer)
         assert ifo.length == 15
         assert ifo.minimum_frequency == 3
-        assert "ET_15_HFLF_psd.txt" in ifo.power_spectral_density.psd_file
+        # ET_15_HFLF_psd.txt (bilby_xG a2ffa07) or ET2026a_15_HFLF_psd.txt (xg_pe 27ceb28)
+        assert "15_HFLF_psd.txt" in ifo.power_spectral_density.psd_file
 
 
 @pytest.mark.parametrize("names", [["H1", "L1", "V1"], ["CE", "ET"]])

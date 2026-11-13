@@ -151,3 +151,31 @@ def test_bin_selection_is_reproducible():
             SETTINGS["domain"], SETTINGS["waveform_generator"], prior, num_processes=2)
         out.append(d["bin_edges"])
     assert out[0] == out[1]
+
+
+def test_fd_pair_stays_inside_prior():
+    """Finite-difference points: central inside the bounds, one-sided at an edge."""
+    from dingo.gw.dataset.relative_binning_bins import _fd_pair
+
+    assert _fd_pair(500.0, 1.0, 0.0, 2000.0) == (499.0, 501.0)
+    assert _fd_pair(0.4, 1.0, 0.0, 2000.0) == (0.4, 1.4)  # was (-0.6, 1.4): NRTidal error
+    assert _fd_pair(1999.5, 1.0, 0.0, 2000.0) == (1998.5, 1999.5)
+    assert _fd_pair(0.3, 1e-4, -np.inf, np.inf) == (0.3 - 1e-4, 0.3 + 1e-4)
+    with pytest.raises(ValueError):
+        _fd_pair(0.2, 1.0, 0.0, 0.5)
+
+
+def test_bin_selection_near_lambda_zero():
+    """Lambda in U(0, 3): most Fisher points are within one step of 0 or 3. Before the
+    one-sided steps, LAL failed with lambda < 0 ("Both should be greater than zero")."""
+    from dingo.gw.dataset.relative_binning_bins import complete_relative_binning_domain
+    from dingo.gw.prior import build_prior_with_defaults
+
+    s = copy.deepcopy(SETTINGS)
+    s["intrinsic_prior"]["lambda_1"] = "bilby.core.prior.Uniform(0, 3)"
+    s["intrinsic_prior"]["lambda_2"] = "bilby.core.prior.Uniform(0, 3)"
+    prior = build_prior_with_defaults(s["intrinsic_prior"])
+    d, report = complete_relative_binning_domain(
+        s["domain"], s["waveform_generator"], prior, num_processes=2)
+    assert len(d["bin_edges"]) > 2
+    assert report["one_sided_steps"] > 0
