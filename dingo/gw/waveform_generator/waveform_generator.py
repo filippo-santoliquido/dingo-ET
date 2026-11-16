@@ -93,6 +93,18 @@ ALIGNED_22_APPROXIMANTS = frozenset(
     }
 )
 
+# The mlgw_bns surrogate of TEOBResumS (aligned spins, tides, higher-order modes),
+# generated through bilby_xG. Not a LAL approximant: a frequency-domain model that
+# WaveformGenerator evaluates directly on the domain frequencies.
+MLGW_BNS = "mlgw_bns"
+MLGW_BNS_DEFAULT_MODES = [(2, 2), (2, 1), (3, 3), (4, 4)]
+# The stored total-mass range of the mlgw_bns model is 2-4 Msun, and bilby_xG rejects
+# points outside it. A detector-frame BNS prior reaches about 6.3 Msun. The surrogate
+# works in reduced frequency f M, so the total mass enters only as a rescaling; a test
+# over the prior (ET BNS project, Stage D test H0m) found no jump at 4 Msun. The range
+# is relaxed to this one.
+MLGW_BNS_MASS_RANGE = (0.0, 10.0)
+
 
 class WaveformGenerator:
     """Generate polarizations using LALSimulation routines in the specified domain for a
@@ -120,7 +132,8 @@ class WaveformGenerator:
         ----------
         approximant : str
             Waveform "approximant" string understood by lalsimulation
-            This is defines which waveform model is used.
+            This is defines which waveform model is used. "mlgw_bns" selects the
+            mlgw_bns surrogate through bilby_xG (see generate_mlgw_bns_waveform).
         domain : Domain
             Domain object that specifies on which physical domain the
             waveform polarizations will be generated, e.g. Fourier
@@ -133,7 +146,7 @@ class WaveformGenerator:
             EOB waveforms can be generated starting from a lower frequency than f_min.
         mode_list : List[Tuple]
             A list of waveform (ell, m) modes to include when generating
-            the polarizations.
+            the polarizations. For mlgw_bns, the default is MLGW_BNS_DEFAULT_MODES.
         spin_conversion_phase : float = None
             Value for phiRef when computing cartesian spins from bilby spins via
             bilby_to_lalsimulation_spins. The common convention is to use the value of
@@ -174,6 +187,20 @@ class WaveformGenerator:
                 self.approximant = LAL_APPROXIMANTS[approximant]
                 if mode_list is not None:
                     self.lal_params = self.setup_mode_array(mode_list)
+            elif approximant == MLGW_BNS:
+                self.approximant = None
+                mode_list = [
+                    (int(ell), int(m))
+                    for ell, m in (mode_list or MLGW_BNS_DEFAULT_MODES)
+                ]
+                from bilby_xG.source import MLGW_BNS_MODES
+
+                unknown = [mode for mode in mode_list if mode not in MLGW_BNS_MODES]
+                if unknown:
+                    raise ValueError(
+                        f"mlgw_bns does not provide the modes {unknown}; available: "
+                        f"{MLGW_BNS_MODES}."
+                    )
             elif self.requires_lal_approximant:
                 raise ValueError(
                     f"LALSimulation implements no waveform called {approximant}. "
@@ -209,16 +236,12 @@ class WaveformGenerator:
     @domain.setter
     def domain(self, value):
         self._domain = value
-        if isinstance(
-            self._domain, RelativeBinningDomain
-        ) and not LS.SimInspiralImplementedFDApproximants(self.approximant):
+        if isinstance(self._domain, RelativeBinningDomain) and not self._native_fd:
             raise ValueError(
                 "RelativeBinningDomain needs a frequency-domain approximant: there is "
                 "no base domain to decimate from."
             )
-        if isinstance(
-            self._domain, MultibandedFrequencyDomain
-        ) and not LS.SimInspiralImplementedFDApproximants(self.approximant):
+        if isinstance(self._domain, MultibandedFrequencyDomain) and not self._native_fd:
             # For non-frequency domain approximants, generate waveforms in the base
             # UniformFrequencyDomain, and later decimate.
             self._use_base_domain = True
@@ -234,6 +257,14 @@ class WaveformGenerator:
         return self._domain
 
     @property
+    def _native_fd(self) -> bool:
+        """Whether the model is generated directly in the frequency domain, at any
+        frequencies (no base domain, no decimation)."""
+        return self.approximant_str == MLGW_BNS or bool(
+            LS.SimInspiralImplementedFDApproximants(self.approximant)
+        )
+
+    @property
     def uses_dft_phase_decomposition(self) -> bool:
         """Whether generate_hplus_hcross_m obtains the m-components by DFT inversion
         of the polarizations on a phase grid. They then sum to exactly the output of
@@ -244,7 +275,7 @@ class WaveformGenerator:
             # altogether (generate_hplus_hcross_m raises), so neither the grid nor
             # the exact mode sum built on it can be used.
             and self.spin_conversion_phase is not None
-            and LS.SimInspiralImplementedFDApproximants(self.approximant)
+            and self._native_fd
             and (self.mode_list is not None or self.approximant_str in DEFAULT_ELL_MAX)
         )
 
@@ -432,22 +463,30 @@ class WaveformGenerator:
         parameters = parameters.copy()
         parameters["f_ref"] = self.f_ref
 
-        parameters_generator, target_function = self._convert_parameters(
-            parameters,
-            self.lal_params,
-            return_target_function=True,
-        )
-
-        # Generate GW polarizations
-        if isinstance(
-            self.domain,
-            (UniformFrequencyDomain, MultibandedFrequencyDomain, RelativeBinningDomain),
-        ):
-            wf_generator = self.generate_FD_waveform
-        elif isinstance(self.domain, TimeDomain):
-            wf_generator = self.generate_TD_waveform
+        if self.approximant_str == MLGW_BNS:
+            parameters_generator, target_function = parameters, None
+            wf_generator = self.generate_mlgw_bns_waveform
         else:
-            raise ValueError(f"Unsupported domain type {type(self.domain)}.")
+            parameters_generator, target_function = self._convert_parameters(
+                parameters,
+                self.lal_params,
+                return_target_function=True,
+            )
+
+            # Generate GW polarizations
+            if isinstance(
+                self.domain,
+                (
+                    UniformFrequencyDomain,
+                    MultibandedFrequencyDomain,
+                    RelativeBinningDomain,
+                ),
+            ):
+                wf_generator = self.generate_FD_waveform
+            elif isinstance(self.domain, TimeDomain):
+                wf_generator = self.generate_TD_waveform
+            else:
+                raise ValueError(f"Unsupported domain type {type(self.domain)}.")
 
         try:
             if target_function is not None:
@@ -905,6 +944,68 @@ class WaveformGenerator:
             raise NotImplementedError(
                 f"Unsupported lal target function " f"{target_function}."
             )
+
+    def generate_mlgw_bns_waveform(self, parameters: Dict) -> Dict[str, np.ndarray]:
+        """
+        Polarizations (h_plus, h_cross) of the mlgw_bns surrogate, through bilby_xG,
+        summed over self.mode_list and evaluated directly at the domain frequencies
+        (in float64).
+
+        Conventions are those of bilby_xG.source.mlgw_bns_individual_modes: the merger
+        is at t = 0, `phase` is the orbital phase at the merger, and f_ref is not used.
+        Parameters outside the surrogate's ranges (other than the total mass, see
+        MLGW_BNS_MASS_RANGE) raise a ValueError. On a UniformFrequencyDomain the
+        polarizations are zero below f_start (if set) or f_min.
+
+        Parameters
+        ----------
+        parameters: dict
+            chirp_mass, mass_ratio, chi_1, chi_2, lambda_1, lambda_2,
+            luminosity_distance, theta_jn, phase.
+
+        Returns
+        -------
+        pol_dict:
+            A dictionary of generated waveform polarizations
+        """
+        from dataclasses import replace
+        from bilby_xG.source import (
+            _mlgw_bns_model,
+            convert_to_mlgw_bns_parameters,
+            mlgw_bns_individual_modes,
+        )
+
+        # Per process (the model is loaded once per process, also in spawned workers).
+        model = _mlgw_bns_model()
+        if model.parameter_ranges.mass_range != MLGW_BNS_MASS_RANGE:
+            model.parameter_ranges = replace(
+                model.parameter_ranges, mass_range=MLGW_BNS_MASS_RANGE
+            )
+
+        if isinstance(self.domain, UniformFrequencyDomain):
+            # The domain's frequencies are float32; at 3 Hz a BNS phase of order 1e5
+            # rad needs float64.
+            f = np.linspace(0.0, self.domain.f_max, len(self.domain))
+            f_min = self.domain.f_min if self.f_start is None else self.f_start
+            inside = f >= f_min
+        elif isinstance(self.domain, (MultibandedFrequencyDomain, RelativeBinningDomain)):
+            f = np.asarray(self.domain(), dtype=np.float64)
+            inside = np.ones(len(f), dtype=bool)
+        else:
+            raise ValueError(
+                f"mlgw_bns is a frequency-domain model; {type(self.domain)} is not "
+                f"supported."
+            )
+
+        p, added = convert_to_mlgw_bns_parameters(parameters)
+        modes = mlgw_bns_individual_modes(
+            f[inside], **{k: p[k] for k in added}, mode_array=self.mode_list
+        )
+        pol = {}
+        for key, name in (("h_plus", "plus"), ("h_cross", "cross")):
+            pol[key] = np.zeros(len(f), dtype=complex)
+            pol[key][inside] = sum(h[name] for h in modes.values())
+        return pol
 
     def generate_hplus_hcross_m(
         self, parameters: Dict[str, float]
