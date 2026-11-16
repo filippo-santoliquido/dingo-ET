@@ -225,6 +225,89 @@ class ProjectOntoDetectors(object):
         return sample
 
 
+class ProjectOntoDetectorsFrequencyDependent(object):
+    """
+    Project the polarizations onto the detectors with the frequency-dependent response of
+    bilby_xG (Earth rotation, finite arm length; see ``dingo.gw.detector_response``).
+
+    Same inputs and outputs as ``ProjectOntoDetectors``: it rescales the polarizations to the
+    sampled luminosity distance, projects them, and applies the arrival time, here per
+    frequency (the delay changes with the Earth's orientation while the signal sweeps
+    through the band). The ``<ifo>_time`` extrinsic parameters (constant delays at
+    ``ref_time``) are moved to the parameters as in ``ProjectOntoDetectors``, but the
+    strain phase uses bilby_xG's delay at the emission time of each frequency. The time to
+    merger needs ``chirp_mass``, ``mass_ratio``, ``chi_1`` and ``chi_2`` in the parameters.
+    Frequencies are those of the domain (``domain()``, e.g. the bin edges of a
+    ``RelativeBinningDomain``).
+    """
+
+    def __init__(self, ifo_list, domain, ref_time, settings):
+        from dingo.gw.detector_response import check_response_settings
+
+        self.ifo_list = ifo_list
+        self.domain = domain
+        self.ref_time = ref_time
+        self.settings = check_response_settings(settings)
+        self.frequencies = np.asarray(domain(), dtype=np.float64)
+
+    def __call__(self, input_sample):
+        from dingo.gw.detector_response import component_masses, detector_strains
+
+        sample = input_sample.copy()
+        parameters = sample["parameters"].copy()
+        extrinsic_parameters = sample["extrinsic_parameters"].copy()
+        try:
+            d_ref = parameters["luminosity_distance"]
+            d_new = extrinsic_parameters.pop("luminosity_distance")
+            ra = extrinsic_parameters.pop("ra")
+            dec = extrinsic_parameters.pop("dec")
+            psi = extrinsic_parameters.pop("psi")
+            tc_ref = parameters["geocent_time"]
+            assert np.allclose(tc_ref, 0.0), "Stored polarizations must have geocent_time 0."
+            tc_new = extrinsic_parameters.pop("geocent_time")
+        except KeyError as e:
+            raise ValueError(f"Missing parameter {e}.")
+
+        batched = not np.isscalar(ra)
+        if batched:
+            d_ratio = (np.asarray(d_ref) / np.asarray(d_new))[:, np.newaxis]
+        else:
+            d_ratio = d_ref / d_new
+        hp = sample["waveform"]["h_plus"] * d_ratio
+        hc = sample["waveform"]["h_cross"] * d_ratio
+        parameters["luminosity_distance"] = d_new
+
+        m1, m2 = component_masses(parameters["chirp_mass"], parameters["mass_ratio"])
+        names = [ifo.name for ifo in self.ifo_list]
+        if batched:
+            strains = {n: np.empty(hp.shape, dtype=np.complex128) for n in names}
+            for k in range(len(ra)):
+                s = detector_strains(
+                    self.ifo_list, hp[k], hc[k], self.frequencies, float(ra[k]),
+                    float(dec[k]), float(psi[k]), self.ref_time, float(tc_new[k]),
+                    float(m1[k]), float(m2[k]), float(parameters["chi_1"][k]),
+                    float(parameters["chi_2"][k]), self.settings,
+                )
+                for n in names:
+                    strains[n][k] = s[n]
+        else:
+            strains = detector_strains(
+                self.ifo_list, hp, hc, self.frequencies, ra, dec, psi, self.ref_time,
+                tc_new, m1, m2, parameters["chi_1"], parameters["chi_2"], self.settings,
+            )
+
+        parameters["ra"] = ra
+        parameters["dec"] = dec
+        parameters["psi"] = psi
+        parameters["geocent_time"] = tc_new
+        for n in names:
+            parameters[f"{n}_time"] = extrinsic_parameters.pop(f"{n}_time")
+        sample["waveform"] = strains
+        sample["parameters"] = parameters
+        sample["extrinsic_parameters"] = extrinsic_parameters
+        return sample
+
+
 class TimeShiftStrain(object):
     """
     Time shift the strains in the individual detectors according to the

@@ -137,8 +137,24 @@ def test_context(wfd):
         expect = summarize_and_whiten(r_edges, whitening_from_gram(wfd.domain.gram[n]))
         np.testing.assert_allclose(x[i, 0] + 1j * x[i, 1], expect, rtol=1e-5, atol=1e-5)
     assert isinstance(ctx.likelihood(), RelativeBinningLikelihood)
+    assert ctx.likelihood().detector_response is None
     with pytest.raises(ValueError):
         ctx.prepared_data({"chirp_mass_proxy": torch.tensor([proxies["chirp_mass_proxy"] + 1e-3])})
+
+    # Stage C: the IS likelihood takes the detector response of the training, unless the
+    # event metadata gives another one (e.g. a network trained without it, data with it).
+    on = {"earth_rotation_time_delay": True, "earth_rotation_beam_patterns": True,
+          "finite_size": True}
+    meta_on = {**metadata, "train_settings": {"data": {**metadata["train_settings"]["data"],
+                                                       "detector_response": on}}}
+    ctx = GWSamplerContext.from_model_metadata(
+        meta_on, {"waveform": summary}, {"relative_binning_proxies": proxies})
+    assert ctx.likelihood().detector_response == {**on, "orbital_motion": False}
+    ctx = GWSamplerContext.from_model_metadata(
+        metadata, {"waveform": summary},
+        {"relative_binning_proxies": proxies, "detector_response": {"finite_size": True}})
+    assert ctx.likelihood().detector_response["finite_size"] is True
+    assert ctx.likelihood().detector_response["earth_rotation_beam_patterns"] is False
 
 
 def _conditioned(wfd, proxies):

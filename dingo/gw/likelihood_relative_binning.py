@@ -41,6 +41,7 @@ class RelativeBinningLikelihood(Likelihood):
         detectors: list,
         t_ref: float,
         log_Zn: float = 0.0,
+        detector_response: dict = None,
     ):
         """
         Parameters
@@ -59,6 +60,10 @@ class RelativeBinningLikelihood(Likelihood):
             Reference GPS time of the detector response.
         log_Zn : float
             -<d|d>/2 if known, else 0 (log likelihood ratio).
+        detector_response : dict, optional
+            Frequency-dependent response (Earth rotation, finite arm length) of bilby_xG,
+            as in the training (``dingo.gw.detector_response``); the time origin is t_ref.
+            None: long-wavelength response of a non-rotating Earth at t_ref.
         """
         self.data_domain = domain
         self.f = domain.bin_edges
@@ -85,11 +90,18 @@ class RelativeBinningLikelihood(Likelihood):
             * np.exp(-2j * np.pi * self.f * (proxies["t_star_proxy"] + g_p))
         )
         self.proxies = dict(proxies)
+        self.detector_response = None
+        if detector_response:
+            from dingo.gw.detector_response import check_response_settings
+
+            self.detector_response = check_response_settings(detector_response)
 
     def _q(self, theta: dict) -> dict:
         """(B, 2) relative-binning coefficients (r0, r1) per detector."""
         p = {k: float(v) for k, v in theta.items()}
         pol = self.waveform_generator.generate_hplus_hcross(p)
+        if self.detector_response is not None:
+            return self._q_frequency_dependent(p, pol)
         q = {}
         for ifo in self.ifos:
             fp = ifo.antenna_response(p["ra"], p["dec"], self.t_ref, p["psi"], "plus")
@@ -102,6 +114,22 @@ class RelativeBinningLikelihood(Likelihood):
             )
             r = h / self.h_ref
             q[ifo.name] = np.stack([0.5 * (r[:-1] + r[1:]), r[1:] - r[:-1]], axis=-1)
+        return q
+
+    def _q_frequency_dependent(self, p: dict, pol: dict) -> dict:
+        """(B, 2) coefficients with bilby_xG's frequency-dependent response at the edges."""
+        from dingo.gw.detector_response import component_masses, detector_strains
+
+        m1, m2 = component_masses(p["chirp_mass"], p["mass_ratio"])
+        h = detector_strains(
+            self.ifos, pol["h_plus"], pol["h_cross"], self.f, p["ra"], p["dec"], p["psi"],
+            self.t_ref, p["geocent_time"], float(m1), float(m2), p["chi_1"], p["chi_2"],
+            self.detector_response,
+        )
+        q = {}
+        for name, strain in h.items():
+            r = strain / self.h_ref
+            q[name] = np.stack([0.5 * (r[:-1] + r[1:]), r[1:] - r[:-1]], axis=-1)
         return q
 
     def _terms(self, q: dict) -> dict:

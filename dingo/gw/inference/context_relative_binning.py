@@ -114,5 +114,11 @@ class RelativeBinningSamplerContext(GWSamplerContext):
                 self.detectors,
                 metadata.get("time_event", self.t_ref),
                 log_Zn=metadata.get("log_noise_evidence", 0.0),
+                # the event's response (e.g. to test a network on data with another
+                # response), else the one of the training
+                detector_response=metadata.get(
+                    "detector_response",
+                    self.model_metadata["train_settings"]["data"].get("detector_response"),
+                ),
             )
         return self._likelihood
