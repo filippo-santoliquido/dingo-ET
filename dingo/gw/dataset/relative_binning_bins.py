@@ -237,9 +237,16 @@ def complete_relative_binning_domain(domain_settings, waveform_generator_setting
         bounds=[_prior_bounds(intrinsic_prior, k) if k in intrinsic_keys else (-np.inf, np.inf)
                 for k in keys],
         psd=np.array([ifo.power_spectral_density.get_power_spectral_density_array(f) for ifo in ifos]),
-        # the dataset's modes (mlgw_bns), so that the bins fit the training signals
-        wfg=WaveformGenerator(approx, RelativeBinningDomain(f), f_ref,
-                              mode_list=waveform_generator_settings.get("mode_list")),
+        # the dataset's modes and mode taper (mlgw_bns), so that the bins fit the
+        # training signals
+        wfg=WaveformGenerator(
+            approx, RelativeBinningDomain(f), f_ref,
+            mode_list=waveform_generator_settings.get("mode_list"),
+            mode_max_time_to_merger=waveform_generator_settings.get(
+                "mode_max_time_to_merger"),
+            mode_taper_fraction=waveform_generator_settings.get(
+                "mode_taper_fraction", 0.05),
+        ),
         fid=fid, i_star=int(np.searchsorted(f, fid.f_star)), projector=_Reference(ifos),
         kernel=PriorDict(dict(s["kernel"])),
     )

@@ -30,11 +30,16 @@ FIDUCIAL = dict(mass_ratio=0.75, chi_1=0.0, chi_2=0.0, lambda_1=0.0, lambda_2=0.
 class FiducialPhase:
     """exp(i Phi_fid(f; Mc)) at fixed frequencies, and the fiducial group delay at f_star.
 
+    Phi_fid is the phase of h_plus of the fiducial (FIDUCIAL at chirp mass Mc; with
+    theta_jn = 0 only the (2, |2|) modes contribute), or, with `mode` (mlgw_bns only),
+    the phase phi_lm of that multipole h_lm = A exp(+i phi_lm) of the fiducial.
     Above the fiducial's end of inspiral (amplitude * f^(7/6) below 1 % of its 20 Hz
     value) the phase is continued by a quadratic fit to the last bin edges below it.
     """
 
-    def __init__(self, waveform_generator, frequencies, f_star=100.0, df_star=1e-3):
+    def __init__(
+        self, waveform_generator, frequencies, f_star=100.0, df_star=1e-3, mode=None
+    ):
         """
         Parameters
         ----------
@@ -47,7 +52,14 @@ class FiducialPhase:
             Frequency of the time proxy [Hz].
         df_star : float
             Half step of the central difference for the group delay at f_star [Hz].
+        mode : (l, m), optional
+            The multipole whose phase is the fiducial phase (the reference of the m
+            group of a dataset with polarizations_per_m). mlgw_bns only. The group
+            delay is then that of this multipole at f_star: its time to merger [s].
         """
+        if mode is not None and waveform_generator.approximant_str != "mlgw_bns":
+            raise ValueError("FiducialPhase with a mode needs approximant mlgw_bns.")
+        self.mode = None if mode is None else (int(mode[0]), int(mode[1]))
         self.f = np.asarray(frequencies, dtype=np.float64)
         probes = np.array([f_star - df_star, f_star + df_star])
         self.seq = np.unique(np.concatenate([self.f, probes]))
@@ -57,11 +69,36 @@ class FiducialPhase:
         self.wfg = waveform_generator
         self.wfg.domain = RelativeBinningDomain(self.seq)
 
+    def _fiducial(self, chirp_mass, frequencies=None):
+        """The fiducial at chirp_mass on self.seq (or on the increasing `frequencies`):
+        h_plus, or the multipole A exp(i phi) of self.mode."""
+        p = dict(FIDUCIAL, chirp_mass=float(chirp_mass))
+        if self.mode is not None:
+            from bilby_xG.source import convert_to_mlgw_bns_parameters
+            from dingo.gw.waveform_generator import mlgw_bns_model
+
+            p, _ = convert_to_mlgw_bns_parameters(p)
+            q = p["q"]
+            amp, phase = mlgw_bns_model().predict_modes_amp_phase(
+                [max(q, 1 / q), p["LambdaAl2"], p["LambdaBl2"], p["chi1z"], p["chi2z"]],
+                p["M"],
+                self.seq if frequencies is None else frequencies,
+                modes=[self.mode],
+                distance_mpc=p["distance"],
+            )
+            return amp[0, 0] * np.exp(1j * phase[0, 0])
+        if frequencies is None:
+            return self.wfg.generate_hplus_hcross(p)["h_plus"]
+        domain = self.wfg.domain
+        try:
+            self.wfg.domain = RelativeBinningDomain(frequencies)
+            return self.wfg.generate_hplus_hcross(p)["h_plus"]
+        finally:
+            self.wfg.domain = domain
+
     def __call__(self, chirp_mass):
         """Returns (exp(i Phi_fid) at self.f, group delay offset Psi'(f_star) / 2 pi)."""
-        hp = self.wfg.generate_hplus_hcross(dict(FIDUCIAL, chirp_mass=float(chirp_mass)))[
-            "h_plus"
-        ]
+        hp = self._fiducial(chirp_mass)
         a, b = hp[self.i_p]
         group_delay = np.angle(b / a) / (2 * self.df_star) / (2 * np.pi)
         h = hp[self.i_f]
@@ -93,19 +130,9 @@ class FiducialPhase:
         evaluated on self.f below the chunk + the chunk + self.f[-1] (no gap below,
         the same last frequency)."""
         f = np.asarray(frequencies, dtype=np.float64)
-        hp_self = self.wfg.generate_hplus_hcross(
-            dict(FIDUCIAL, chirp_mass=float(chirp_mass))
-        )["h_plus"][self.i_f]
-        cont = self._continuation(hp_self)
+        cont = self._continuation(self._fiducial(chirp_mass)[self.i_f])
         seq = np.unique(np.concatenate([self.f[self.f < f[0]], f, self.f[-1:]]))
-        domain = self.wfg.domain
-        try:
-            self.wfg.domain = RelativeBinningDomain(seq)
-            hp = self.wfg.generate_hplus_hcross(
-                dict(FIDUCIAL, chirp_mass=float(chirp_mass))
-            )["h_plus"][np.searchsorted(seq, f)]
-        finally:
-            self.wfg.domain = domain
+        hp = self._fiducial(chirp_mass, seq)[np.searchsorted(seq, f)]
         e = np.exp(1j * np.angle(hp))
         if cont is not None:
             f_cut, f0, c = cont
@@ -259,12 +286,22 @@ class DivideByFiducial:
     `RelativeBinningProxyConditioning` multiplies it back in float64."""
 
     def __init__(self, fiducial_phase):
+        """fiducial_phase: a FiducialPhase for every polarization, or {m: FiducialPhase}
+        for per-m polarizations (keys f"{pol}_m{m}"), each divided by its own."""
         self.fid = fiducial_phase
 
     def __call__(self, input_sample):
         sample = input_sample.copy()
-        e = np.conj(self.fid(sample["parameters"]["chirp_mass"])[0])
-        sample["waveform"] = {k: v * e for k, v in sample["waveform"].items()}
+        mc = sample["parameters"]["chirp_mass"]
+        if isinstance(self.fid, dict):
+            e = {m: np.conj(fid(mc)[0]) for m, fid in self.fid.items()}
+            sample["waveform"] = {
+                k: v * e[int(k.rsplit("_m", 1)[1])]
+                for k, v in sample["waveform"].items()
+            }
+        else:
+            e = np.conj(self.fid(mc)[0])
+            sample["waveform"] = {k: v * e for k, v in sample["waveform"].items()}
         return sample
 
 

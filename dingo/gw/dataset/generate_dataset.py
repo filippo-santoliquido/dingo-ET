@@ -37,6 +37,7 @@ def generate_parameters_and_polarizations(
     prior: BBHPriorDict,
     num_samples: int,
     num_processes: int,
+    per_m: bool = False,
 ) -> Tuple[pd.DataFrame, Dict[str, np.ndarray]]:
     """
     Generate a dataset of waveforms based on parameters drawn from the prior.
@@ -47,6 +48,8 @@ def generate_parameters_and_polarizations(
     prior : Prior
     num_samples : int
     num_processes : int
+    per_m : bool
+        Polarizations per m-component, keys f"{pol}_m{m}" (generate_waveforms_parallel).
 
     Returns
     -------
@@ -60,13 +63,15 @@ def generate_parameters_and_polarizations(
         with threadpool_limits(limits=1, user_api="blas"):
             with Pool(processes=num_processes) as pool:
                 polarizations = generate_waveforms_parallel(
-                    waveform_generator, parameters, pool
+                    waveform_generator, parameters, pool, per_m=per_m
                 )
     else:
-        polarizations = generate_waveforms_parallel(waveform_generator, parameters)
+        polarizations = generate_waveforms_parallel(
+            waveform_generator, parameters, per_m=per_m
+        )
 
     # Find cases where waveform generation failed and only return data for successful ones
-    wf_failed = np.any(np.isnan(polarizations["h_plus"]), axis=1)
+    wf_failed = np.any([np.isnan(v).any(axis=1) for v in polarizations.values()], axis=0)
     if wf_failed.any():
         idx_failed = np.where(wf_failed)[0]
         idx_ok = np.where(~wf_failed)[0]
@@ -193,20 +198,40 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
 
     dataset_dict = {"settings": settings}
 
+    # Each m group of modes stored separately (keys f"{pol}_m{m}"), mlgw_bns only.
+    per_m = settings.get("polarizations_per_m", False)
+    wg = settings["waveform_generator"]
+    if per_m:
+        if wg["approximant"] != "mlgw_bns":
+            raise NotImplementedError("polarizations_per_m needs approximant mlgw_bns.")
+        groups = [m for _, m in waveform_generator.mode_list]
+        if len(set(groups)) != len(groups):
+            raise ValueError(
+                f"polarizations_per_m needs one mode per m (one fiducial phase per "
+                f"group), got {waveform_generator.mode_list}."
+            )
+
     compression_transforms = []
     if isinstance(domain, RelativeBinningDomain):
         # Always stored as h / exp(i Phi_fid(Mc)) at the bin edges (smooth; the training
-        # conditioning multiplies the fiducial back in float64).
-        wg = settings["waveform_generator"]
-        compression_transforms.append(
-            DivideByFiducial(
-                FiducialPhase(
-                    WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
-                    domain(),
-                    f_star=domain.settings.get("f_star", 100.0),
-                )
-            )
+        # conditioning multiplies the fiducial back in float64). Per m group, each
+        # group divided by the phase of its own mode of the fiducial.
+        fiducial = partial(
+            FiducialPhase,
+            frequencies=domain(),
+            f_star=domain.settings.get("f_star", 100.0),
         )
+        if per_m:
+            fid = {
+                m: fiducial(
+                    WaveformGenerator(wg["approximant"], domain, wg["f_ref"]),
+                    mode=(ell, m),
+                )
+                for ell, m in waveform_generator.mode_list
+            }
+        else:
+            fid = fiducial(WaveformGenerator(wg["approximant"], domain, wg["f_ref"]))
+        compression_transforms.append(DivideByFiducial(fid))
         waveform_generator.transform = Compose(compression_transforms)
     if "compression" in settings:
 
@@ -260,6 +285,7 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
                     waveform_generator,
                     prior,
                     num_processes=num_processes,
+                    per_m=per_m,
                 )
                 parameters, polarizations = call_func_strict_output_dim(
                     func, n_train + n_test
@@ -296,6 +322,7 @@ def generate_dataset(settings: Dict, num_processes: int) -> WaveformDataset:
         waveform_generator,
         prior,
         num_processes=num_processes,
+        per_m=per_m,
     )
     parameters, polarizations = call_func_strict_output_dim(
         func, settings["num_samples"]
