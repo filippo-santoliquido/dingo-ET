@@ -277,3 +277,42 @@ class ApplySVD(object):
             func = self.svd_basis.decompress
         sample["waveform"] = {k: func(v) for k, v in sample["waveform"].items()}
         return sample
+
+
+def svd_group_key(waveform_key: str) -> str:
+    """The SVD group of a per-m polarization key: f"{pol}_m{m}" -> f"m{m}"."""
+    return f"m{int(waveform_key.rsplit('_m', 1)[1])}"
+
+
+class ApplyGroupSVD(object):
+    """SVD compression / decompression with one basis per m group of modes (datasets with
+    polarizations_per_m, keys f"{pol}_m{m}"): the groups have different structure, and one
+    shared basis would need about the sum of the group sizes (Stage D test H4f)."""
+
+    def __init__(self, bases: dict, inverse: bool = False):
+        """
+        Parameters
+        ----------
+        bases : dict
+            {f"m{m}": SVDBasis}
+        inverse : bool
+            Decompression if True.
+        """
+        self.bases = bases
+        self.inverse = inverse
+
+    def __call__(self, input_sample: dict):
+        sample = input_sample.copy()
+        out = {}
+        for k, v in sample["waveform"].items():
+            b = self.bases[svd_group_key(k)]
+            out[k] = b.decompress(v) if self.inverse else b.compress(v)
+        sample["waveform"] = out
+        return sample
+
+
+def is_group_svd(svd_dict) -> bool:
+    """True for the dataset "svd" entry of a per-group compression ({f"m{m}": basis})."""
+    return svd_dict is not None and "V" not in svd_dict and all(
+        k.startswith("m") for k in svd_dict
+    )

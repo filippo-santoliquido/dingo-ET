@@ -19,6 +19,11 @@ from dingo.gw.transforms.relative_binning_transforms import (
     RelativeBinningProxyConditioning,
     SummarizeAndWhiten,
 )
+from dingo.gw.transforms.relative_binning_mode_transforms import (
+    ModeGroupProxyConditioning,
+    ProjectModeGroupsFrequencyDependent,
+    SummarizeWhitenModeGroups,
+)
 from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.transforms import (
     AddWhiteNoiseComplex,
@@ -154,6 +159,27 @@ def set_train_transforms(
         )
         assert wfd.domain == asd_dataset.domain
 
+    # Per-m groups of modes (Stage D, `relative_binning_mode_tables`): one summary per m
+    # group, joint whitening with tables looked up on a chirp-mass proxy grid.
+    mode_groups = relative_binning and wfd.settings.get("polarizations_per_m", False)
+    if mode_groups:
+        from dingo.gw.relative_binning_mode_tables import load_lookups
+
+        if "mode_group_lookup" not in data_settings:
+            raise ValueError(
+                "A per-m dataset needs data_settings['mode_group_lookup'] (directory of "
+                "`python -m dingo.gw.relative_binning_mode_tables`)."
+            )
+        if not data_settings.get("detector_response"):
+            raise NotImplementedError(
+                "The per-m input is implemented with the frequency-dependent response only."
+            )
+        wg_settings = wfd.settings["waveform_generator"]
+        mode_lookups = load_lookups(
+            data_settings["mode_group_lookup"], domain, wg_settings, ifo_list
+        )
+        groups = [int(md[1]) for md in wg_settings["mode_list"]]
+
     extrinsic_prior_dict = get_extrinsic_prior_dict(data_settings["extrinsic_prior"])
     if data_settings["inference_parameters"] == "default":
         data_settings["inference_parameters"] = default_inference_parameters
@@ -178,7 +204,14 @@ def set_train_transforms(
             )
         )
         extra_context_parameters += transforms[-1].context_parameters
-    if relative_binning:
+    if mode_groups:
+        transforms.append(
+            ModeGroupProxyConditioning(
+                domain.settings["kernel"], mode_lookups[ifo_names[0]], domain(), ifo_names
+            )
+        )
+        extra_context_parameters += transforms[-1].context_parameters
+    elif relative_binning:
         # Proxies (Mc~, t*~) and the division by the reference at the bin edges.
         wg = wfd.settings["waveform_generator"]
         transforms.append(
@@ -245,7 +278,13 @@ def set_train_transforms(
         )
         data_settings["standardization"] = standardization_dict
 
-    if data_settings.get("detector_response"):
+    if mode_groups:
+        transforms.append(
+            ProjectModeGroupsFrequencyDependent(
+                ifo_list, domain, ref_time, data_settings["detector_response"], groups
+            )
+        )
+    elif data_settings.get("detector_response"):
         # Earth rotation and finite arm length, from bilby_xG (dingo.gw.detector_response).
         transforms.append(
             ProjectOntoDetectorsFrequencyDependent(
@@ -254,7 +293,9 @@ def set_train_transforms(
         )
     else:
         transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
-    if relative_binning:
+    if mode_groups:
+        transforms.append(SummarizeWhitenModeGroups(mode_lookups))
+    elif relative_binning:
         transforms.append(SummarizeAndWhiten(gram))
     else:
         transforms.append(SampleNoiseASD(asd_dataset))

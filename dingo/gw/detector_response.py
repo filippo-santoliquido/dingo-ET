@@ -57,6 +57,65 @@ def _check_interferometers(ifos):
             )
 
 
+def detector_responses(
+    ifos,
+    frequencies,
+    ra,
+    dec,
+    psi,
+    ref_time,
+    geocent_time,
+    mass_1,
+    mass_2,
+    chi_1,
+    chi_2,
+    settings,
+):
+    """Response factors {detector name: (F_plus, F_cross)} of one sample at ``frequencies``
+    (beam patterns and arrival-time phase per frequency): the strain is
+    F_plus h_plus + F_cross h_cross. Parameters as :func:`detector_strains`."""
+    from bilby_xG.interferometer import compute_wave_frame
+    from bilby_xG.utils import calculate_time_to_merger_for_any_mode
+
+    _check_interferometers(ifos)
+    f = np.asarray(frequencies, dtype=np.float64)
+    tau = calculate_time_to_merger_for_any_mode(
+        f, mass_1, mass_2, chi_1, chi_2, mode=2, safety=1
+    )
+    time = ref_time + geocent_time  # orientation only
+    flags = dict(
+        earth_rotation_time_delay=settings["earth_rotation_time_delay"],
+        earth_rotation_beam_patterns=settings["earth_rotation_beam_patterns"],
+        finite_size=settings["finite_size"],
+    )
+    frame = compute_wave_frame(
+        ra,
+        dec,
+        time,
+        psi,
+        f,
+        tau,
+        earth_rotation=flags["earth_rotation_time_delay"]
+        or flags["earth_rotation_beam_patterns"],
+    )
+    out = {}
+    for ifo in ifos:
+        out[ifo.name] = ifo.frequency_dependent_antenna_response(
+            ra,
+            dec,
+            time,
+            psi,
+            f,
+            ref_time,
+            tau,
+            wave_frame=frame,
+            orbital_motion=False,
+            elapsed_time=geocent_time,
+            **flags,
+        )
+    return out
+
+
 def detector_strains(
     ifos,
     h_plus,
@@ -87,47 +146,11 @@ def detector_strains(
     chi_1, chi_2 : float, aligned spins (time to merger)
     settings : dict, from :func:`check_response_settings`
     """
-    from bilby_xG.interferometer import compute_wave_frame
-    from bilby_xG.utils import calculate_time_to_merger_for_any_mode
-
-    _check_interferometers(ifos)
-    f = np.asarray(frequencies, dtype=np.float64)
-    tau = calculate_time_to_merger_for_any_mode(
-        f, mass_1, mass_2, chi_1, chi_2, mode=2, safety=1
+    resp = detector_responses(
+        ifos, frequencies, ra, dec, psi, ref_time, geocent_time, mass_1, mass_2, chi_1,
+        chi_2, settings,
     )
-    time = ref_time + geocent_time  # orientation only
-    flags = dict(
-        earth_rotation_time_delay=settings["earth_rotation_time_delay"],
-        earth_rotation_beam_patterns=settings["earth_rotation_beam_patterns"],
-        finite_size=settings["finite_size"],
-    )
-    frame = compute_wave_frame(
-        ra,
-        dec,
-        time,
-        psi,
-        f,
-        tau,
-        earth_rotation=flags["earth_rotation_time_delay"]
-        or flags["earth_rotation_beam_patterns"],
-    )
-    out = {}
-    for ifo in ifos:
-        fp, fc = ifo.frequency_dependent_antenna_response(
-            ra,
-            dec,
-            time,
-            psi,
-            f,
-            ref_time,
-            tau,
-            wave_frame=frame,
-            orbital_motion=False,
-            elapsed_time=geocent_time,
-            **flags,
-        )
-        out[ifo.name] = fp * h_plus + fc * h_cross
-    return out
+    return {name: fp * h_plus + fc * h_cross for name, (fp, fc) in resp.items()}
 
 
 def component_masses(chirp_mass, mass_ratio):

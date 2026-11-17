@@ -34,7 +34,12 @@ class FiducialPhase:
     theta_jn = 0 only the (2, |2|) modes contribute), or, with `mode` (mlgw_bns only),
     the phase phi_lm of that multipole h_lm = A exp(+i phi_lm) of the fiducial.
     Above the fiducial's end of inspiral (amplitude * f^(7/6) below 1 % of its 20 Hz
-    value) the phase is continued by a quadratic fit to the last bin edges below it.
+    value, first at the edge f_cut) the phase is continued by a quadratic fit to the last
+    bin edges below it. With `mode`, the continuation starts at f0, the last edge below
+    f_cut: mlgw_bns sets the phase to 0 above its band end, which lies inside the bin
+    [f0, f_cut], and a phase jump inside a bin breaks the cross-group noise tables of the
+    per-m input (Stage D test H4m2). Without `mode` (one group: the reference phase does
+    not enter the noise) it starts at f_cut, as before.
     """
 
     def __init__(
@@ -105,14 +110,48 @@ class FiducialPhase:
         e = np.exp(1j * np.angle(h))
         cont = self._continuation(h)
         if cont is not None:
-            f_cut, f0, c = cont
-            above = self.f >= f_cut
+            f_start, f0, c = cont
+            above = self.f >= f_start
             e[above] = np.exp(1j * np.polyval(c, self.f[above] - f0))
         return e, group_delay
 
+    def phase_slope_tau(self, chirp_mass):
+        """With `mode`: the continued multipole phase phi at self.f (as __call__, but not
+        wrapped), its slope dphi/df [rad/Hz], and the time to merger tau = dphi/df / 2 pi
+        [s] (mlgw_bns time map; above f0 from the continuation). For the per-m tables
+        (`dingo.gw.relative_binning_mode_tables`)."""
+        if self.mode is None:
+            raise ValueError("phase_slope_tau needs a mode (mlgw_bns).")
+        from bilby_xG.source import convert_to_mlgw_bns_parameters
+        from dingo.gw.waveform_generator import mlgw_bns_model
+
+        p, _ = convert_to_mlgw_bns_parameters(dict(FIDUCIAL, chirp_mass=float(chirp_mass)))
+        q = p["q"]
+        amp, phase, tf = mlgw_bns_model().predict_modes_amp_phase(
+            [max(q, 1 / q), p["LambdaAl2"], p["LambdaBl2"], p["chi1z"], p["chi2z"]],
+            p["M"], self.f, modes=[self.mode], distance_mpc=p["distance"], return_tf=True,
+        )
+        # the phase of A exp(i phi) as __call__ (np.angle): + pi where A < 0 (mlgw gives
+        # the (4, 4) amplitude a negative sign)
+        phi = np.array(phase[0, 0], dtype=np.float64) + np.pi * (amp[0, 0] < 0)
+        slope = -2 * np.pi * np.array(tf[0, 0], dtype=np.float64)
+        cont = self._continuation(amp[0, 0] * np.exp(1j * phi))
+        if cont is not None:
+            f_start, f0, _ = cont
+            i0 = int(np.searchsorted(self.f, f0))
+            fit = slice(max(i0 - 7, 0), i0 + 1)  # the same 8 edges as _continuation
+            # fitted to the unwrapped phase: equals _continuation's fit up to 2 pi k in c[2]
+            c = np.polyfit(self.f[fit] - f0, phi[fit], 2)
+            above = self.f >= f_start
+            x = self.f[above] - f0
+            phi[above] = np.polyval(c, x)
+            slope[above] = np.polyval(np.polyder(c), x)
+        return phi, slope, slope / (2 * np.pi)
+
     def _continuation(self, h):
-        """(f_cut, f0, quadratic coefficients) of the phase continuation above the end
-        of inspiral, from h at self.f; None if the fiducial does not end."""
+        """(f_start, f0, quadratic coefficients) of the phase continuation above the end
+        of inspiral, from h at self.f; None if the fiducial does not end. The phase is
+        continued for f >= f_start: f0 with a mode, else f_cut (class docstring)."""
         amp = np.abs(h) * self.f ** (7 / 6)
         low = (amp < 0.01 * np.interp(20.0, self.f, amp)) & (self.f >= 20.0)
         if not low.any():
@@ -121,7 +160,7 @@ class FiducialPhase:
         fit = slice(max(i_cut - 8, 0), i_cut)
         f0 = self.f[i_cut - 1]
         c = np.polyfit(self.f[fit] - f0, np.unwrap(np.angle(h[fit])), 2)
-        return self.f[i_cut], f0, c
+        return (f0 if self.mode is not None else self.f[i_cut]), f0, c
 
     def at(self, chirp_mass, frequencies):
         """exp(i Phi_fid) at any increasing frequencies inside [self.f[0], self.f[-1]]
@@ -135,8 +174,8 @@ class FiducialPhase:
         hp = self._fiducial(chirp_mass, seq)[np.searchsorted(seq, f)]
         e = np.exp(1j * np.angle(hp))
         if cont is not None:
-            f_cut, f0, c = cont
-            above = f >= f_cut
+            f_start, f0, c = cont
+            above = f >= f_start
             e[above] = np.exp(1j * np.polyval(c, f[above] - f0))
         return e
 

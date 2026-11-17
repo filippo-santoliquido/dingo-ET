@@ -143,7 +143,11 @@ class WaveformDataset(DingoDataset, torch.utils.data.Dataset):
             self.settings.get("compression", None) is not None
             and "svd" in self.settings["compression"]
         ):
-            self.svd["V"] = self.domain.update_data(self.svd["V"], axis=0)
+            if "V" not in self.svd:  # one basis per m group
+                for g in self.svd:
+                    self.svd[g]["V"] = self.domain.update_data(self.svd[g]["V"], axis=0)
+            else:
+                self.svd["V"] = self.domain.update_data(self.svd["V"], axis=0)
         elif self.polarizations is not None:
             for k, v in self.polarizations.items():
                 self.polarizations[k] = self.domain.update_data(v)
@@ -164,7 +168,20 @@ class WaveformDataset(DingoDataset, torch.utils.data.Dataset):
         # These transforms must be in reverse order compared to when dataset was
         # constructed.
 
-        if "svd" in self.settings["compression"]:
+        if "svd" in self.settings["compression"] and self.settings["compression"]["svd"].get(
+            "per_group", False
+        ):
+            # one basis per m group (polarizations_per_m)
+            from dingo.gw.SVD import ApplyGroupSVD
+
+            if svd_size_update is not None:
+                raise NotImplementedError("svd_size_update with per-group SVD bases.")
+            decompression_transform_list.append(
+                ApplyGroupSVD(
+                    {g: SVDBasis(dictionary=d) for g, d in self.svd.items()}, inverse=True
+                )
+            )
+        elif "svd" in self.settings["compression"]:
             assert self.svd is not None
 
             # We allow the option to reduce the size of the SVD used for decompression,
