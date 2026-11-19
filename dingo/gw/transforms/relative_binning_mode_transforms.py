@@ -22,6 +22,10 @@ from dingo.gw.relative_binning_mode_tables import round_to_grid
 from dingo.gw.transforms.gnpe_transforms import GNPEBase
 
 CHUNK = 512  # samples per vectorized block (memory: phases and K per block)
+# Training data of the per-m input are complex64 (float32 precision: relative error about 1e-7
+# of the whitened signal, against unit noise). complex128 batches of 4096 needed about 5 GB per
+# data-loader worker and caused an OOM in the pipeline_f3_hom smoke (2026-11-19).
+DTYPE = np.complex64
 
 
 def group_ratios_to_q(r):
@@ -115,7 +119,7 @@ class ModeGroupProxyConditioning(GNPEBase):
         tcb = np.atleast_1d(t_centre)
         wfb = {k: np.atleast_2d(v) for k, v in wf.items()}
         n = len(mcb)
-        out = {k: np.empty(v.shape, dtype=np.complex128) for k, v in wfb.items()}
+        out = {k: np.empty(v.shape, dtype=DTYPE) for k, v in wfb.items()}
         mc_p_all, t_p_all, t_star_all = np.empty(n), np.empty(n), np.empty(n)
         lo, hi = self.i_star - 1, self.i_star
         f76 = self.f ** (7 / 6)
@@ -182,11 +186,12 @@ class ProjectModeGroupsFrequencyDependent:
         hp = np.stack([np.atleast_2d(wf[f"h_plus_m{m}"]) for m in self.groups], axis=1)
         hc = np.stack([np.atleast_2d(wf[f"h_cross_m{m}"]) for m in self.groups], axis=1)
         d_ratio = np.atleast_1d(np.asarray(d_ref) / np.asarray(d_new))[:, None, None]
+        d_ratio = d_ratio.astype(np.float32 if hp.dtype == np.complex64 else np.float64)
         hp, hc = hp * d_ratio, hc * d_ratio
         parameters["luminosity_distance"] = d_new
         m1, m2 = component_masses(parameters["chirp_mass"], parameters["mass_ratio"])
         names = [ifo.name for ifo in self.ifo_list]
-        strains = {nm: np.empty(hp.shape, dtype=np.complex128) for nm in names}
+        strains = {nm: np.empty(hp.shape, dtype=DTYPE) for nm in names}
         args = [np.atleast_1d(x) for x in (ra, dec, psi, tc_new, m1, m2,
                                            parameters["chi_1"], parameters["chi_2"])]
         for k in range(hp.shape[0]):
@@ -224,12 +229,13 @@ class SummarizeWhitenModeGroups:
         for nm, r in sample["waveform"].items():
             batched = r.ndim == 3
             rb = r if batched else r[None]
-            q = group_ratios_to_q(rb)  # (n, B, 2G)
-            x = np.empty(q.shape, dtype=np.complex128)
+            n, g, b1 = rb.shape
+            x = np.empty((n, b1 - 1, 2 * g), dtype=DTYPE)  # (n, B, 2G)
             lk = self.lookups[nm]
-            for a in range(0, len(q), CHUNK):
-                sl = slice(a, min(a + CHUNK, len(q)))
-                x[sl] = np.einsum("nbij,nbj->nbi", lk.K(mc_p[sl]), q[sl])
+            for a in range(0, n, CHUNK):
+                sl = slice(a, min(a + CHUNK, n))
+                q = group_ratios_to_q(rb[sl].astype(DTYPE, copy=False))  # (c, B, 2G)
+                x[sl] = np.matmul(lk.K(mc_p[sl]), q[..., None])[..., 0]
             x = flatten_input(x)
             out[nm] = x if batched else x[0]
         sample["waveform"] = out

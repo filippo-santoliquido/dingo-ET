@@ -111,6 +111,7 @@ def test_proxy_conditioning(lookup, stored):
         e_p = fid(mc_p[0])[0]
         h_ref = EDGES ** (-7 / 6) * e_p * np.exp(-2j * np.pi * EDGES * (t_p[0] + g_p22))
         for p in ("h_plus", "h_cross"):
+            assert out["waveform"][f"{p}_m{m}"].dtype == np.complex64
             np.testing.assert_allclose(out["waveform"][f"{p}_m{m}"][0], raw[f"{p}_m{m}"] / h_ref,
                                        rtol=1e-6, atol=0)
     # t*: the Stage C definition applied to the (2,2) group
@@ -149,8 +150,9 @@ def test_projection_is_linear(stored):
         {"waveform": tot, "parameters": dict(par), "extrinsic_parameters": dict(ext)})
     for nm in IFOS:
         assert per_m["waveform"][nm].shape == (2, 4, len(EDGES))
+        assert per_m["waveform"][nm].dtype == np.complex64  # training data in float32
         np.testing.assert_allclose(per_m["waveform"][nm].sum(axis=1), total["waveform"][nm],
-                                   rtol=1e-12, atol=1e-12 * np.max(np.abs(total["waveform"][nm])))
+                                   rtol=0, atol=1e-6 * np.max(np.abs(total["waveform"][nm])))
     assert per_m["parameters"]["ra"][1] == 2.0 and "ra" not in per_m["extrinsic_parameters"]
 
 
@@ -163,8 +165,9 @@ def test_summarize(lookup):
     x = out["waveform"]["ET_1L_IT"]
     assert x.shape == (3, 8 * (len(EDGES) - 1)) and out["asds"]["ET_1L_IT"].shape == x.shape
     q = group_ratios_to_q(r)
-    want = flatten_input(np.einsum("nbij,nbj->nbi", lookup.K(mc_p), q))
-    np.testing.assert_allclose(x, want, rtol=1e-12)
+    want = flatten_input(np.einsum("nbij,nbj->nbi", lookup.K(mc_p).astype(np.complex128), q))
+    assert x.dtype == np.complex64  # training data in float32
+    np.testing.assert_allclose(x, want, rtol=0, atol=1e-6 * np.max(np.abs(want)))
 
 
 def test_tstar_inference_matches_training(lookup, stored):
