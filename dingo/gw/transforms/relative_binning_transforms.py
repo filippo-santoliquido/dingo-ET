@@ -162,22 +162,53 @@ class FiducialPhase:
         c = np.polyfit(self.f[fit] - f0, np.unwrap(np.angle(h[fit])), 2)
         return (f0 if self.mode is not None else self.f[i_cut]), f0, c
 
-    def at(self, chirp_mass, frequencies):
+    def at(self, chirp_mass, frequencies, return_tau=False):
         """exp(i Phi_fid) at any increasing frequencies inside [self.f[0], self.f[-1]]
         (e.g. a chunk of the full data grid), with the end of inspiral and the
         continuation fixed by self.f, so that it equals __call__ on self.f. LAL is
         evaluated on self.f below the chunk + the chunk + self.f[-1] (no gap below,
-        the same last frequency)."""
+        the same last frequency).
+
+        return_tau (with `mode` only): also return the fiducial's time map tau(f) [s]
+        at these frequencies, as phase_slope_tau: the mlgw_bns time to merger of the
+        mode, and above the start of the continuation its slope / 2 pi (the reference
+        taper of the per-m data input, `dingo.gw.relative_binning_mode_data`)."""
         f = np.asarray(frequencies, dtype=np.float64)
         cont = self._continuation(self._fiducial(chirp_mass)[self.i_f])
-        seq = np.unique(np.concatenate([self.f[self.f < f[0]], f, self.f[-1:]]))
-        hp = self._fiducial(chirp_mass, seq)[np.searchsorted(seq, f)]
-        e = np.exp(1j * np.angle(hp))
+        if return_tau:
+            if self.mode is None:
+                raise ValueError("return_tau needs a mode (mlgw_bns).")
+            # mlgw_bns is evaluated point by point: no sequence effect
+            amp, phase, tf = self._mode_amp_phase_tf(chirp_mass, f)
+            e = np.exp(1j * np.angle(amp * np.exp(1j * phase)))
+            tau = -tf
+        else:
+            seq = np.unique(np.concatenate([self.f[self.f < f[0]], f, self.f[-1:]]))
+            hp = self._fiducial(chirp_mass, seq)[np.searchsorted(seq, f)]
+            e = np.exp(1j * np.angle(hp))
         if cont is not None:
             f_start, f0, c = cont
             above = f >= f_start
             e[above] = np.exp(1j * np.polyval(c, f[above] - f0))
-        return e
+            if return_tau:
+                tau[above] = np.polyval(np.polyder(c), f[above] - f0) / (2 * np.pi)
+        return (e, tau) if return_tau else e
+
+    def _mode_amp_phase_tf(self, chirp_mass, frequencies):
+        """mlgw_bns amplitude, phase and time tf [s] (time to merger = -tf) of self.mode
+        of the fiducial at chirp_mass, at the frequencies."""
+        from bilby_xG.source import convert_to_mlgw_bns_parameters
+        from dingo.gw.waveform_generator import mlgw_bns_model
+
+        p, _ = convert_to_mlgw_bns_parameters(dict(FIDUCIAL, chirp_mass=float(chirp_mass)))
+        q = p["q"]
+        amp, phase, tf = mlgw_bns_model().predict_modes_amp_phase(
+            [max(q, 1 / q), p["LambdaAl2"], p["LambdaBl2"], p["chi1z"], p["chi2z"]],
+            p["M"], np.asarray(frequencies, dtype=np.float64), modes=[self.mode],
+            distance_mpc=p["distance"], return_tf=True,
+        )
+        return (np.asarray(amp[0, 0]), np.asarray(phase[0, 0], dtype=np.float64),
+                np.asarray(tf[0, 0], dtype=np.float64))
 
 
 def summarize_and_whiten(r, lt):

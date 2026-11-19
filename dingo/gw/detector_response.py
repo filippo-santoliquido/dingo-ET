@@ -70,18 +70,30 @@ def detector_responses(
     chi_1,
     chi_2,
     settings,
+    time_to_merger=None,
 ):
     """Response factors {detector name: (F_plus, F_cross)} of one sample at ``frequencies``
     (beam patterns and arrival-time phase per frequency): the strain is
-    F_plus h_plus + F_cross h_cross. Parameters as :func:`detector_strains`."""
+    F_plus h_plus + F_cross h_cross. Parameters as :func:`detector_strains`.
+
+    ``time_to_merger`` (array at ``frequencies``, s): the time map tau(f) of the
+    response, e.g. a waveform mode's own map (bilby_xG "time_to_merger", as in bilby_xG's
+    ``get_detector_response_for_frequency_dependent_antenna_response`` for a mode that
+    supplies it). None: the 2PN map of the dominant mode (the masses and spins are then
+    used)."""
     from bilby_xG.interferometer import compute_wave_frame
     from bilby_xG.utils import calculate_time_to_merger_for_any_mode
 
     _check_interferometers(ifos)
     f = np.asarray(frequencies, dtype=np.float64)
-    tau = calculate_time_to_merger_for_any_mode(
-        f, mass_1, mass_2, chi_1, chi_2, mode=2, safety=1
-    )
+    if time_to_merger is None:
+        tau = calculate_time_to_merger_for_any_mode(
+            f, mass_1, mass_2, chi_1, chi_2, mode=2, safety=1
+        )
+    else:
+        tau = np.asarray(time_to_merger, dtype=np.float64)
+        if tau.shape != f.shape or not np.all(np.isfinite(tau)):
+            raise ValueError("time_to_merger must be finite, one value per frequency.")
     time = ref_time + geocent_time  # orientation only
     flags = dict(
         earth_rotation_time_delay=settings["earth_rotation_time_delay"],

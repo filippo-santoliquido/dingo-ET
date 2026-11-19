@@ -165,3 +165,43 @@ def test_summarize(lookup):
     q = group_ratios_to_q(r)
     want = flatten_input(np.einsum("nbij,nbj->nbi", lookup.K(mc_p), q))
     np.testing.assert_allclose(x, want, rtol=1e-12)
+
+
+def test_tstar_inference_matches_training(lookup, stored):
+    """The inference map t* -> geocent_time (`GroupDelayAtFStar`, from h_plus at theta_jn 0,
+    where only the m = 2 group contributes) uses the training's t* definition."""
+    from dingo.gw.inference.steps_relative_binning import GroupDelayAtFStar
+
+    st, _ = stored
+    tr = ModeGroupProxyConditioning(KERNEL, lookup, EDGES, IFOS)
+    ext = tr(_sample(st))["extrinsic_parameters"]
+    t_centre = np.mean([0.012, 0.015])
+    domain = RelativeBinningDomain(EDGES, settings={"f_star": 100.0})
+    metadata = {"dataset_settings": {
+        "domain": domain.domain_dict,
+        "waveform_generator": dict(approximant="mlgw_bns", f_ref=100.0,
+                                   mode_list=[list(m) for m in MODES],
+                                   mode_max_time_to_merger=T)}}
+    G = GroupDelayAtFStar(metadata).one({k: THETA[k] for k in (
+        "chirp_mass", "mass_ratio", "chi_1", "chi_2", "lambda_1", "lambda_2")})
+    # the training interpolates the fiducial phases of the lookup in Mc (4 points)
+    assert abs((t_centre - G) - ext["t_star"]) < 1e-7, (t_centre - G, ext["t_star"])
+
+
+def test_data_input_whitening():
+    """WhitenModeGroupSummary = ModeGroupTables.data_input (same seed), flattened as the
+    training input."""
+    from dingo.gw.relative_binning_mode_data import to_table_layout
+    from dingo.gw.transforms.relative_binning_mode_transforms import WhitenModeGroupSummary
+
+    tab = ModeGroupTables(_fids(), _psd, T, 0.05)
+    rng = np.random.default_rng(3)
+    A = rng.standard_normal((4, 2, len(EDGES) - 1)) + 1j * rng.standard_normal((4, 2, len(EDGES) - 1))
+    tr = WhitenModeGroupSummary({"ET_1L_IT": tab}, 1.4, seed=7)
+    out = tr({"waveform": {"ET_1L_IT": A}})
+    ref = tab.data_input(to_table_layout(A), 1.4, rng=np.random.default_rng(7))
+    np.testing.assert_allclose(out["waveform"]["ET_1L_IT"], flatten_input(ref), rtol=1e-12)
+    assert out["asds"]["ET_1L_IT"].shape == out["waveform"]["ET_1L_IT"].shape
+    # the same input at every call (fixed seed)
+    np.testing.assert_array_equal(tr({"waveform": {"ET_1L_IT": A}})["waveform"]["ET_1L_IT"],
+                                  out["waveform"]["ET_1L_IT"])

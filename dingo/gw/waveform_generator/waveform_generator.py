@@ -1013,7 +1013,10 @@ class WaveformGenerator:
             )
 
     def generate_mlgw_bns_waveform(
-        self, parameters: Dict, group_by_m: bool = False
+        self,
+        parameters: Dict,
+        group_by_m: bool = False,
+        return_time_to_merger: bool = False,
     ) -> Dict:
         """
         Polarizations (h_plus, h_cross) of the mlgw_bns surrogate, through bilby_xG,
@@ -1036,6 +1039,11 @@ class WaveformGenerator:
             If True, return {m: {"h_plus": ..., "h_cross": ...}} with the sum over the
             modes of each m > 0 (each entry is bilby_xG's plus/cross of the mode,
             which contains the (l, m) and (l, -m) multipoles) instead of the sum.
+        return_time_to_merger: bool
+            With group_by_m: also return, per group, "time_to_merger" [s], the time
+            map of its mode (bilby_xG "time_to_merger"; NaN outside the domain's
+            f_min). It needs one mode per m. For a response that follows each mode's
+            own time map (ET BNS Stage D importance sampling).
 
         Returns
         -------
@@ -1064,6 +1072,14 @@ class WaveformGenerator:
                 f"supported."
             )
 
+        if return_time_to_merger:
+            if not group_by_m:
+                raise ValueError("return_time_to_merger needs group_by_m.")
+            ms = [int(m) for _, m in self.mode_list]
+            if len(set(ms)) != len(ms):
+                raise ValueError(
+                    f"return_time_to_merger needs one mode per m; got {self.mode_list}."
+                )
         p, added = convert_to_mlgw_bns_parameters(parameters)
         modes = mlgw_bns_individual_modes(
             f[inside], **{k: p[k] for k in added}, mode_array=self.mode_list
@@ -1083,6 +1099,9 @@ class WaveformGenerator:
             )
             pol["h_plus"][inside] += w * h["plus"]
             pol["h_cross"][inside] += w * h["cross"]
+            if return_time_to_merger:
+                pol["time_to_merger"] = np.full(len(f), np.nan)
+                pol["time_to_merger"][inside] = h["time_to_merger"]
         if group_by_m:
             return pol_m
         return {k: sum(pol[k] for pol in pol_m.values()) for k in ("h_plus", "h_cross")}

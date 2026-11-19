@@ -235,3 +235,37 @@ class SummarizeWhitenModeGroups:
         sample["waveform"] = out
         sample["asds"] = {k: np.ones(v.shape, dtype=np.float32) for k, v in out.items()}
         return sample
+
+
+class WhitenModeGroupSummary:
+    """Inference data input of a per-m network: network summaries A (per detector,
+    (G, 2, B), tapered references; `dingo.gw.relative_binning_mode_data`) at the proxy
+    Mc~ -> x = W(Mc~) (A + sqrt(eps s) z'), flattened as in training; unit-ASD channel.
+    The top-up noise z' (Re, Im ~ N(0, 1)) gives the data input exactly the training noise
+    (`ModeGroupTables.data_input`); it is drawn from a fixed seed, so the input is the same
+    at every call."""
+
+    def __init__(self, tables, chirp_mass_proxy, seed=0):
+        """tables: {detector name: ModeGroupTables} (the dataset's, with the PSD of the
+        detector and the eps / nodes of the lookup table)."""
+        self.names = list(tables)
+        self.seed = seed
+        self.W, self.scale = {}, {}
+        for n, tab in tables.items():
+            W, _, scale = tab.whitening(float(chirp_mass_proxy))
+            self.W[n], self.scale[n] = W, scale
+
+    def __call__(self, input_sample):
+        from dingo.gw.relative_binning_mode_data import to_table_layout
+
+        sample = input_sample.copy()
+        rng = np.random.default_rng(self.seed)
+        out = {}
+        for n in self.names:
+            A = to_table_layout(sample["waveform"][n])  # (B, 2G)
+            z = rng.standard_normal(A.shape) + 1j * rng.standard_normal(A.shape)
+            x = np.einsum("bij,bj->bi", self.W[n], A + self.scale[n][:, None] * z)
+            out[n] = flatten_input(x)
+        sample["waveform"] = out
+        sample["asds"] = {k: np.ones(v.shape, dtype=np.float32) for k, v in out.items()}
+        return sample
