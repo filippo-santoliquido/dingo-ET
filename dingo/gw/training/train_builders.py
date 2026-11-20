@@ -19,6 +19,11 @@ from dingo.gw.transforms.relative_binning_transforms import (
     RelativeBinningProxyConditioning,
     SummarizeAndWhiten,
 )
+from dingo.gw.transforms.relative_binning_mode_transforms import (
+    ModeGroupProxyConditioning,
+    ProjectModeGroupsFrequencyDependent,
+    SummarizeWhitenModeGroups,
+)
 from dingo.gw.waveform_generator import WaveformGenerator
 from dingo.gw.transforms import (
     AddWhiteNoiseComplex,
@@ -154,6 +159,27 @@ def set_train_transforms(
         )
         assert wfd.domain == asd_dataset.domain
 
+    # Per-m groups of modes (Stage D, `relative_binning_mode_tables`): one summary per m
+    # group, joint whitening with tables looked up on a chirp-mass proxy grid.
+    mode_groups = relative_binning and wfd.settings.get("polarizations_per_m", False)
+    if mode_groups:
+        from dingo.gw.relative_binning_mode_tables import load_lookups
+
+        if "mode_group_lookup" not in data_settings:
+            raise ValueError(
+                "A per-m dataset needs data_settings['mode_group_lookup'] (directory of "
+                "`python -m dingo.gw.relative_binning_mode_tables`)."
+            )
+        if not data_settings.get("detector_response"):
+            raise NotImplementedError(
+                "The per-m input is implemented with the frequency-dependent response only."
+            )
+        wg_settings = wfd.settings["waveform_generator"]
+        mode_lookups = load_lookups(
+            data_settings["mode_group_lookup"], domain, wg_settings, ifo_list
+        )
+        groups = [int(md[1]) for md in wg_settings["mode_list"]]
+
     extrinsic_prior_dict = get_extrinsic_prior_dict(data_settings["extrinsic_prior"])
     if data_settings["inference_parameters"] == "default":
         data_settings["inference_parameters"] = default_inference_parameters
@@ -178,7 +204,14 @@ def set_train_transforms(
             )
         )
         extra_context_parameters += transforms[-1].context_parameters
-    if relative_binning:
+    if mode_groups:
+        transforms.append(
+            ModeGroupProxyConditioning(
+                domain.settings["kernel"], mode_lookups[ifo_names[0]], domain(), ifo_names
+            )
+        )
+        extra_context_parameters += transforms[-1].context_parameters
+    elif relative_binning:
         # Proxies (Mc~, t*~) and the division by the reference at the bin edges.
         wg = wfd.settings["waveform_generator"]
         transforms.append(
@@ -245,7 +278,13 @@ def set_train_transforms(
         )
         data_settings["standardization"] = standardization_dict
 
-    if data_settings.get("detector_response"):
+    if mode_groups:
+        transforms.append(
+            ProjectModeGroupsFrequencyDependent(
+                ifo_list, domain, ref_time, data_settings["detector_response"], groups
+            )
+        )
+    elif data_settings.get("detector_response"):
         # Earth rotation and finite arm length, from bilby_xG (dingo.gw.detector_response).
         transforms.append(
             ProjectOntoDetectorsFrequencyDependent(
@@ -254,7 +293,9 @@ def set_train_transforms(
         )
     else:
         transforms.append(ProjectOntoDetectors(ifo_list, domain, ref_time))
-    if relative_binning:
+    if mode_groups:
+        transforms.append(SummarizeWhitenModeGroups(mode_lookups))
+    elif relative_binning:
         transforms.append(SummarizeAndWhiten(gram))
     else:
         transforms.append(SampleNoiseASD(asd_dataset))
@@ -476,4 +517,56 @@ def build_svd_for_embedding_network(
         print("      " + str(V.shape))
         V_rb_list.append(V)
     print("\n")
+    return V_rb_list
+
+
+def load_svd_for_embedding_network(
+    basis_files, detectors: List[str], size: int, min_idx: int = 0
+) -> List[np.ndarray]:
+    """
+    Load precomputed SVD matrices V for the initial projection of the embedding network,
+    instead of building them (settings: model.embedding_kwargs.svd.basis_files).
+
+    Parameters
+    ----------
+    basis_files : dict or list
+        {detector: path} or a list of paths in the order of `detectors`. Each file is an
+        `SVDBasis` file whose V has one row per network input element (the full domain,
+        as `build_svd_for_embedding_network` saves it) and at least `size` columns.
+    detectors : list of str
+        data_settings["detectors"].
+    size : int
+        Number of basis elements used by the network (svd.size).
+    min_idx : int
+        Rows below this index are dropped, as in `build_svd_for_embedding_network`.
+
+    Returns
+    -------
+    list of numpy arrays
+        V for each detector, ordered as `detectors`, truncated to `size` columns.
+    """
+    if isinstance(basis_files, dict):
+        missing = [d for d in detectors if d not in basis_files]
+        if missing:
+            raise KeyError(f"svd.basis_files has no file for detectors {missing}.")
+        files = [basis_files[d] for d in detectors]
+    else:
+        files = list(basis_files)
+        if len(files) != len(detectors):
+            raise ValueError(
+                f"svd.basis_files has {len(files)} files for {len(detectors)} detectors."
+            )
+    V_rb_list = []
+    for det, f in zip(detectors, files):
+        basis = SVDBasis()
+        basis.from_file(f)
+        V = basis.V
+        if V.shape[1] < size:
+            raise ValueError(
+                f"{f}: V has {V.shape[1]} basis elements, svd.size is {size}."
+            )
+        assert np.allclose(V[:min_idx], 0)
+        V = V[min_idx:, :size]
+        print(f"Loaded embedding SVD for {det} from {f}: V {V.shape}.")
+        V_rb_list.append(V)
     return V_rb_list

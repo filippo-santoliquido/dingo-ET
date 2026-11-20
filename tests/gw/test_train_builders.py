@@ -358,3 +358,30 @@ def test_chirp_prior_conditioning_training_transforms(tmp_path):
     assert [V.shape for V in V_rb_list] == [
         (len(wfd.domain) - wfd.domain.min_idx, 2)
     ] * len(DETECTORS)
+
+
+def test_load_svd_for_embedding_network(tmp_path):
+    """svd.basis_files: precomputed V per detector, in detector order, truncated to size."""
+    from dingo.gw.SVD import SVDBasis
+    from dingo.gw.training.train_builders import load_svd_for_embedding_network
+
+    rng = np.random.default_rng(0)
+    files, Vs = {}, {}
+    for det in ["ET_1L_IT", "ET_1L_DE"]:
+        V, _ = np.linalg.qr(rng.normal(size=(12, 5)) + 1j * rng.normal(size=(12, 5)))
+        basis = SVDBasis()
+        basis.from_dictionary({"V": V, "s": np.arange(5, 0, -1.0)})
+        files[det] = str(tmp_path / f"svd_{det}.hdf5")
+        basis.to_file(files[det])
+        Vs[det] = V
+
+    order = ["ET_1L_DE", "ET_1L_IT"]
+    V_list = load_svd_for_embedding_network(files, order, size=3)
+    for det, V in zip(order, V_list):
+        np.testing.assert_array_equal(V, Vs[det][:, :3])
+    V_list = load_svd_for_embedding_network([files[d] for d in order], order, size=5)
+    assert [V.shape for V in V_list] == [(12, 5)] * 2
+    with pytest.raises(ValueError):
+        load_svd_for_embedding_network(files, order, size=6)
+    with pytest.raises(KeyError):
+        load_svd_for_embedding_network({"ET_1L_IT": files["ET_1L_IT"]}, order, size=3)
