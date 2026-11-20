@@ -44,6 +44,7 @@ from dingo.gw.dataset import WaveformDataset
 from dingo.gw.training.train_builders import (
     build_dataset,
     build_svd_for_embedding_network,
+    load_svd_for_embedding_network,
     set_train_transforms,
 )
 
@@ -879,19 +880,29 @@ def _prepare_wfd_and_initial_weights(
         and "svd" in model_kwargs["embedding_kwargs"]
         and not model_kwargs["embedding_kwargs"]["svd"].get("no_init", False)
     ):
-        batch_size = train_settings["training"]["stage_0"]["batch_size"]
-        print("\nBuilding SVD for initialization of embedding network.")
-        # num_workers is deliberately not passed: the SVD data loader always uses
-        # num_workers=0, since worker processes corrupt the BLAS state and make
-        # scipy's SVD segfault (see PR #349 / issue #338).
-        initial_weights["V_rb_list"] = build_svd_for_embedding_network(
-            wfd=wfd,
-            data_settings=train_settings["data"],
-            asd_dataset_path=train_settings["training"]["stage_0"]["asd_dataset_path"],
-            batch_size=batch_size,
-            out_dir=train_dir,
-            **model_kwargs["embedding_kwargs"]["svd"],
-        )
+        svd_settings = model_kwargs["embedding_kwargs"]["svd"]
+        if svd_settings.get("basis_files"):
+            print("\nLoading SVD for initialization of embedding network.")
+            initial_weights["V_rb_list"] = load_svd_for_embedding_network(
+                basis_files=svd_settings["basis_files"],
+                detectors=train_settings["data"]["detectors"],
+                size=svd_settings["size"],
+                min_idx=wfd.domain.min_idx,
+            )
+        else:
+            batch_size = train_settings["training"]["stage_0"]["batch_size"]
+            print("\nBuilding SVD for initialization of embedding network.")
+            # num_workers is deliberately not passed: the SVD data loader always uses
+            # num_workers=0, since worker processes corrupt the BLAS state and make
+            # scipy's SVD segfault (see PR #349 / issue #338).
+            initial_weights["V_rb_list"] = build_svd_for_embedding_network(
+                wfd=wfd,
+                data_settings=train_settings["data"],
+                asd_dataset_path=train_settings["training"]["stage_0"]["asd_dataset_path"],
+                batch_size=batch_size,
+                out_dir=train_dir,
+                **model_kwargs["embedding_kwargs"]["svd"],
+            )
     else:
         initial_weights = None
 
